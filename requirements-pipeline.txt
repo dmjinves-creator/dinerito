@@ -1,0 +1,7 @@
+yfinance==1.3.0
+pandas==3.0.2
+pandas-ta==0.4.71b0
+google-genai==2.0.0
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2
+requests==2.33.1
