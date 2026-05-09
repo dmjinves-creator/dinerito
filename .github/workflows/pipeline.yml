@@ -1,0 +1,36 @@
+name: Pipeline Diario DINERITO
+
+on:
+  schedule:
+    - cron: '0 3 * * 1-5'  # 03:00 UTC = 22:00 EST, lunes a viernes
+  workflow_dispatch:         # permite lanzarlo manualmente desde GitHub
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements-pipeline.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-pipeline.txt
+
+      - name: Run pipeline
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_POOLER_REGION: ${{ secrets.SUPABASE_POOLER_REGION }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
