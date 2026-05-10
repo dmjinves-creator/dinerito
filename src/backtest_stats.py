@@ -198,9 +198,21 @@ def compute_stats(df: pd.DataFrame) -> dict:
     hit_golden = _hr(gc_ev)
     hit_death  = _hr(dc_ev)
 
-    r7  = round(ev["retorno_7d"].mean(),  2) if "retorno_7d"  in ev and n_ev else 0.0
-    r15 = round(ev["retorno_15d"].mean(), 2) if "retorno_15d" in ev and n_ev else 0.0
-    r30 = round(ev["retorno_30d"].mean(), 2) if "retorno_30d" in ev and n_ev else 0.0
+    # Strategy-adjusted returns: death_cross is a short → negate raw market return
+    def _adj(row, col):
+        v = row[col]
+        return v if row["tipo_evento"] == "golden_cross" else -v
+
+    if n_ev and "retorno_7d" in ev.columns and "retorno_30d" in ev.columns:
+        ev_adj = ev.copy()
+        for c in ["retorno_7d", "retorno_15d", "retorno_30d"]:
+            if c in ev_adj.columns:
+                ev_adj[c] = ev_adj.apply(lambda r: _adj(r, c), axis=1)
+        r7  = round(ev_adj["retorno_7d"].mean(),  2) if "retorno_7d"  in ev_adj.columns else 0.0
+        r15 = round(ev_adj["retorno_15d"].mean(), 2) if "retorno_15d" in ev_adj.columns else 0.0
+        r30 = round(ev_adj["retorno_30d"].mean(), 2) if "retorno_30d" in ev_adj.columns else 0.0
+    else:
+        r7 = r15 = r30 = 0.0
 
     # Hit rate by scoring
     hr_scoring: dict[int, float] = {}
@@ -241,12 +253,16 @@ def compute_stats(df: pd.DataFrame) -> dict:
         senales_por_año = round(por_año.mean(), 1)
 
     # Equity curve: invest $1000 in each evaluable signal chronologically
+    # Death cross = short strategy → negate raw return to get strategy P&L
     equity: list[dict] = []
     if n_ev > 0 and "retorno_30d" in ev.columns:
         ev_sorted = ev.dropna(subset=["retorno_30d"]).sort_values("fecha_senal")
         capital = 1000.0
         for _, row in ev_sorted.iterrows():
-            capital = capital * (1 + float(row["retorno_30d"]) / 100)
+            ret = float(row["retorno_30d"])
+            if row.get("tipo_evento") == "death_cross":
+                ret = -ret
+            capital = capital * (1 + ret / 100)
             fecha = (
                 row["fecha_senal"].strftime("%Y-%m-%d")
                 if hasattr(row["fecha_senal"], "strftime")

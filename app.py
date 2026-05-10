@@ -43,7 +43,7 @@ st.set_page_config(
     page_title="DINERITO · Plataforma Bursátil IA",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="auto",
 )
 
 # ---------------------------------------------------------------------------
@@ -466,14 +466,28 @@ with st.sidebar:
         st.info("Sin ejecuciones registradas")
 
     # --- Admin Panel ---
-    try:
-        admin_mode = st.secrets.get("ADMIN_MODE", "false").lower() == "true"
-    except Exception:
-        admin_mode = os.getenv("ADMIN_MODE", "false").lower() == "true"
+    st.divider()
+    if "admin_unlocked" not in st.session_state:
+        st.session_state["admin_unlocked"] = False
 
-    if admin_mode:
-        st.divider()
+    if not st.session_state["admin_unlocked"]:
+        _pwd = st.text_input("🔐 Contraseña admin", type="password", key="admin_pwd_input")
+        if _pwd:
+            try:
+                _correct = st.secrets.get("ADMIN_PASSWORD", "Casanova55-")
+            except Exception:
+                _correct = os.getenv("ADMIN_PASSWORD", "Casanova55-")
+            if _pwd == _correct:
+                st.session_state["admin_unlocked"] = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta")
+
+    if st.session_state["admin_unlocked"]:
         st.subheader("⚙️ Panel de Control")
+        if st.button("🔒 Cerrar sesión admin", use_container_width=True):
+            st.session_state["admin_unlocked"] = False
+            st.rerun()
 
         if st.button("▶️ Ejecutar Pipeline Ahora", type="primary", use_container_width=True):
             output_box = st.empty()
@@ -1160,6 +1174,14 @@ with tab6:
 
         _all_years   = get_all_years()
         _all_sectors = get_all_sectors()
+
+        if len(_all_years) < 3:
+            st.warning(
+                f"**Base de datos incompleta** — solo hay {len(_all_years)} año(s) en `backtest_resultados`. "
+                "Para ver métricas fiables ejecuta el backtest completo desde el sidebar (admin) "
+                "o con `python -m src.backtester`.",
+                icon="⚠️",
+            )
 
         _yr_min = int(_all_years[0])  if _all_years else 2015
         _yr_max = int(_all_years[-1]) if _all_years else 2025
