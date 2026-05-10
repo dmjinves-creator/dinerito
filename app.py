@@ -295,7 +295,6 @@ def _render_signal_card(senal: dict) -> None:
                 <p style="margin:0; color:#8b9cbc; font-size:0.73em; font-weight:500;">{fecha}</p>
             </div>
         </div>
-
         <div style="display:flex; gap:7px; flex-wrap:wrap;">
             <span style="background:#1c2333; border:1px solid #30363d; border-radius:20px;
                          padding:3px 11px; color:#e6edf3; font-size:0.78em; font-weight:600;">
