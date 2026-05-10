@@ -101,8 +101,8 @@ def _render_signal_card(senal: dict) -> None:
 # Tab definitions
 # ---------------------------------------------------------------------------
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["📡 Radar Activo", "📊 Laboratorio", "📋 Bitácora", "🏆 Track Record"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📡 Radar Activo", "📊 Laboratorio", "📋 Bitácora", "🏆 Track Record", "📖 Manual"]
 )
 
 # ===========================================================================
@@ -435,3 +435,412 @@ with tab4:
         height=350,
     )
     st.plotly_chart(fig_line, use_container_width=True)
+
+# ===========================================================================
+# TAB 5 — Manual
+# ===========================================================================
+
+with tab5:
+    st.header("📖 Manual de Usuario — DINERITO")
+    st.caption("Guía completa del sistema de detección de señales bursátiles con IA")
+
+    # -----------------------------------------------------------------------
+    # 1. Qué es DINERITO
+    # -----------------------------------------------------------------------
+    with st.expander("1. ¿Qué es DINERITO?", expanded=True):
+        st.markdown("""
+**DINERITO** es una plataforma de análisis bursátil automatizada que monitoriza **75 activos del mercado americano** (acciones, ETFs e índices) en busca de señales técnicas de alta probabilidad.
+
+Cada día a las **22:00 EST** un pipeline automatizado:
+1. Descarga precios históricos y calcula indicadores técnicos
+2. Detecta cruces de medias móviles (Golden Cross / Death Cross)
+3. Aplica un sistema de filtros para eliminar falsas señales
+4. Enriquece cada señal con datos fundamentales y sentimiento de noticias
+5. Genera un análisis de 3 puntos con Inteligencia Artificial (Gemini 2.5 Flash)
+6. Guarda los resultados en la base de datos y envía alertas por Telegram
+
+El objetivo es **encontrar señales de tendencia real** antes de que el movimiento ya esté descontado por el mercado.
+        """)
+
+    # -----------------------------------------------------------------------
+    # 2. Las señales: Golden Cross y Death Cross
+    # -----------------------------------------------------------------------
+    with st.expander("2. Las señales: Golden Cross y Death Cross"):
+        col_gc, col_dc = st.columns(2)
+        with col_gc:
+            st.markdown("""
+#### 🟢 Golden Cross
+Se produce cuando la **SMA de 50 sesiones cruza al alza** la SMA de 200 sesiones.
+
+**Significado:** el precio a corto plazo supera la tendencia de largo plazo → señal **alcista**.
+
+**Condición exacta:**
+- Ayer: SMA₅₀ ≤ SMA₂₀₀
+- Hoy:  SMA₅₀ > SMA₂₀₀
+
+**Lo que se busca:** inicio de un nuevo tramo alcista con momentum real.
+            """)
+        with col_dc:
+            st.markdown("""
+#### 🔴 Death Cross
+Se produce cuando la **SMA de 50 sesiones cruza a la baja** la SMA de 200 sesiones.
+
+**Significado:** el precio a corto plazo cae por debajo de la tendencia de largo plazo → señal **bajista**.
+
+**Condición exacta:**
+- Ayer: SMA₅₀ ≥ SMA₂₀₀
+- Hoy:  SMA₅₀ < SMA₂₀₀
+
+**Lo que se busca:** inicio de una corrección o tendencia bajista sostenida.
+            """)
+
+        st.info("""
+**¿Por qué medias de 50 y 200?**
+Son las referencias más seguidas por gestores institucionales y fondos. Cuando se cruzan, una parte del mercado reacciona automáticamente (stops, rebalanceos), lo que crea momentum adicional.
+        """)
+
+    # -----------------------------------------------------------------------
+    # 3. Sistema de filtros anti-ruido
+    # -----------------------------------------------------------------------
+    with st.expander("3. Sistema de filtros anti-ruido (por qué no toda señal pasa)"):
+        st.markdown("""
+Un cruce de medias en solitario tiene una tasa de falsas señales muy alta. DINERITO aplica **3 filtros en cascada** para quedarse sólo con los cruces de alta convicción:
+        """)
+
+        st.markdown("""
+---
+#### Filtro 1 — Fuerza de tendencia: ADX ≥ 25
+El **ADX (Average Directional Index)** mide la fuerza de una tendencia, independientemente de su dirección.
+
+| ADX | Interpretación |
+|-----|---------------|
+| < 20 | Mercado lateral (sin tendencia) |
+| 20–25 | Tendencia débil |
+| **≥ 25** | **Tendencia válida ✓** |
+| ≥ 40 | Tendencia muy fuerte |
+
+**¿Por qué?** Un cruce en mercado lateral produce muchas señales falsas (whipsaws). El ADX ≥ 25 garantiza que hay una tendencia real detrás del cruce.
+
+---
+#### Filtro 2 — Confirmación de volumen: Vol ≥ 1.2× su media de 20 días
+El precio se mueve donde va el dinero. Si el cruce ocurre con **volumen inferior a la media**, hay pocas probabilidades de continuación.
+
+- **Volumen relativo < 1.2×** → señal descartada (sin convicción)
+- **Volumen relativo ≥ 1.2×** → señal con participación institucional potencial ✓
+
+---
+#### Filtro 3 — RSI no en zona extrema opuesta
+Evita entrar en el peor momento del ciclo:
+
+- **Golden Cross:** RSI ≤ 75 (si el RSI ya es > 75 el activo está sobrecomprado; el cruce llega tarde)
+- **Death Cross:** RSI ≥ 25 (si el RSI ya es < 25 el activo está sobrevendido; el cruce llega tarde)
+
+**Resultado:** sólo pasan los cruces donde todavía hay recorrido en la dirección de la señal.
+
+---
+        """)
+
+        st.success("Un cruce que pasa los 3 filtros tiene históricamente una tasa de acierto muy superior a un cruce sin filtrar.")
+
+    # -----------------------------------------------------------------------
+    # 4. Sistema de scoring (1-3 estrellas)
+    # -----------------------------------------------------------------------
+    with st.expander("4. Sistema de Scoring (⭐ / ⭐⭐ / ⭐⭐⭐🔥)"):
+        st.markdown("""
+Una vez que una señal pasa los 3 filtros, recibe una **puntuación de 1 a 3** basada en la **distancia porcentual entre las dos medias**:
+
+```
+dist_sma_pct = ((SMA₅₀ - SMA₂₀₀) / SMA₂₀₀) × 100
+```
+
+| Distancia |  Scoring | Interpretación |
+|-----------|---------|---------------|
+| dist < 0.5%  | ⭐ (1/3) | Cruce reciente, medias casi en contacto — señal débil |
+| 0.5% ≤ dist < 1.5% | ⭐⭐ (2/3) | Separación moderada — señal media |
+| dist ≥ 1.5% | ⭐⭐⭐🔥 (3/3) | Medias bien separadas — señal fuerte |
+
+**Cuanto mayor es la separación, más confirmado está el cambio de tendencia.** Un scoring 3 indica que las medias llevan varios días divergiendo, lo que reduce la probabilidad de una reversión inmediata.
+
+> Consejo: filtra por scoring ≥ 2 en la Bitácora para concentrarte en las señales con más convicción.
+        """)
+
+    # -----------------------------------------------------------------------
+    # 5. Análisis IA: los 3 puntos
+    # -----------------------------------------------------------------------
+    with st.expander("5. Análisis IA — cómo interpretar los 3 puntos"):
+        st.markdown("""
+Cada señal que supera los filtros recibe un análisis generado por **Gemini 2.5 Flash** (Google). El modelo recibe todos los datos técnicos, fundamentales y macroeconómicos y devuelve exactamente **3 puntos**:
+
+---
+#### 1. TÉCNICO
+¿El contexto de precio justifica o contradice el cruce?
+
+El modelo evalúa si el cruce es coherente con la acción del precio reciente: ¿lleva semanas subiendo? ¿hay resistencias cercanas? ¿el RSI acompaña?
+
+---
+#### 2. FUNDAMENTAL
+¿Hay un catalizador real detrás del movimiento?
+
+El modelo usa búsqueda web en tiempo real (Google Search grounding) para identificar si hay noticias recientes, resultados de earnings, cambios en la dirección o eventos corporativos que expliquen el movimiento.
+
+---
+#### 3. RIESGO
+Principal amenaza a vigilar en las próximas 4 semanas.
+
+Puede ser un earnings date cercano, un sector en corrección, tipo de interés, riesgo regulatorio, o simplemente que la valoración ya descuenta mucho optimismo.
+
+---
+
+**Datos que recibe el modelo:**
+- Precio de cierre, SMA 50/200, RSI-14, ADX-14, volumen relativo
+- Scoring y distancia entre medias
+- Sector, P/E ratio, EPS, capitalización bursátil
+- Sentimiento de las últimas 5 noticias (Alpha Vantage)
+- Fed Funds Rate y CPI del mes en curso
+        """)
+
+    # -----------------------------------------------------------------------
+    # 6. Guía de las 4 pestañas
+    # -----------------------------------------------------------------------
+    with st.expander("6. Guía de las 4 pestañas principales"):
+        st.markdown("""
+### 📡 Radar Activo
+Muestra las señales detectadas en el último periodo seleccionado (24h / 48h / 7 días).
+
+**Cuándo usarlo:** primera cosa que consultar cada mañana. Si hay señales nuevas, aparecen aquí con su análisis IA completo.
+
+**Tip:** si no hay señales, es buena señal — el sistema no fuerza entradas. El mercado no siempre da oportunidades de alta calidad.
+
+---
+### 📊 Laboratorio de Gráficos
+Gráfico interactivo de velas japonesas para cualquier ticker del universo, con:
+- **SMA 50** (azul) y **SMA 200** (naranja) superpuestas
+- **RSI-14** en panel inferior con niveles 30/70
+- **Marcadores de señales históricas** (triángulos verdes = Golden Cross, rojos = Death Cross)
+- Tabla de señales históricas del ticker seleccionado
+
+**Cuándo usarlo:** para validar visualmente una señal o estudiar el historial de cruces de un activo concreto.
+
+---
+### 📋 Bitácora
+Histórico completo y filtrable de todas las señales detectadas. Filtros disponibles:
+- **Tickers** (uno o varios)
+- **Tipo de señal** (Golden Cross / Death Cross / Todos)
+- **Scoring mínimo** (1, 2 o 3)
+- **Rango de fechas** (desde / hasta)
+
+**Exportación:** botón CSV para descargar el conjunto filtrado.
+
+**Cuándo usarlo:** análisis retrospectivo, backtesting manual, o para compartir señales.
+
+---
+### 🏆 Track Record
+Métricas de rendimiento histórico del sistema:
+
+| Métrica | Descripción |
+|---------|-------------|
+| **Total señales evaluadas** | Señales con más de 30 días de antigüedad |
+| **Hit Rate** | % de señales con retorno positivo a 30 días |
+| **Retorno medio 30d** | Retorno medio de todas las señales evaluadas |
+| **Mejor sector** | Sector con mayor hit rate histórico |
+
+Incluye tres gráficos:
+1. **Scatter dist_sma vs retorno 30d** — correlación entre la fuerza del cruce y el retorno
+2. **Bar hit rate por sector** — qué sectores responden mejor a estas señales
+3. **Evolución del hit rate acumulado** — cómo mejora (o empeora) la tasa de acierto con el tiempo
+
+> Las señales necesitan **más de 30 días** desde su emisión para aparecer en el Track Record.
+        """)
+
+    # -----------------------------------------------------------------------
+    # 7. Universo de activos
+    # -----------------------------------------------------------------------
+    with st.expander("7. Universo de activos monitorizados (75 tickers)"):
+        st.markdown("""
+El sistema analiza diariamente 75 activos divididos en 3 grupos:
+
+#### Mega-cap (20 acciones)
+Las 20 mayores empresas del S&P 500 por capitalización: AAPL, MSFT, NVDA, GOOGL, META, AMZN, TSLA, JPM, V, MA, UNH, JNJ, PG, HD, BAC, WMT, XOM, CVX, LLY, AVGO.
+
+#### Mid-cap Growth (40 acciones)
+Empresas de crecimiento de mediana capitalización con alta liquidez: COST, MRK, ABBV, CRM, ACN, AMD, NFLX, TMO, PEP, KO, ADBE, CSCO, MCD, ABT, WFC, TXN, NEE, LIN, PM, DHR, INTC, RTX, HON, UPS, IBM, CAT, SBUX, GS, BKNG, SPGI, AMGN, MDT, ISRG, NOW, PANW, UBER, SHOP, SQ, SNOW, ARM.
+
+#### ETFs sectoriales (10)
+XLK (Tecnología), XLF (Financiero), XLE (Energía), XLV (Salud), XLY (Consumo discrecional), XLI (Industrial), XLP (Consumo básico), XLU (Utilities), XLB (Materiales), XLRE (Inmobiliario).
+
+#### Índices de mercado (5)
+SPY (S&P 500), QQQ (Nasdaq 100), DIA (Dow Jones), IWM (Russell 2000), VTI (Total Market).
+
+---
+**¿Por qué ETFs e índices?** Los cruces en ETFs sectoriales señalan rotaciones de capital entre sectores, que a menudo preceden movimientos en las acciones individuales del sector.
+        """)
+
+    # -----------------------------------------------------------------------
+    # 8. Indicadores técnicos — glosario
+    # -----------------------------------------------------------------------
+    with st.expander("8. Glosario de indicadores técnicos"):
+        st.markdown("""
+| Indicador | Fórmula / Definición | Uso en DINERITO |
+|-----------|---------------------|-----------------|
+| **SMA 50** | Media aritmética de los últimos 50 cierres | Tendencia a corto-medio plazo |
+| **SMA 200** | Media aritmética de los últimos 200 cierres | Tendencia de largo plazo |
+| **RSI-14** | Índice de Fuerza Relativa (14 sesiones). 0-100. | Filtra entradas en zonas extremas |
+| **ADX-14** | Average Directional Index (14 sesiones). 0-100. | Confirma que hay tendencia real |
+| **VOL MA20** | Media de volumen de 20 días | Referencia para el filtro de volumen |
+| **Volumen relativo** | Volumen hoy ÷ VOL MA20 | Mide la convicción institucional |
+| **dist_sma_pct** | (SMA₅₀ - SMA₂₀₀) / SMA₂₀₀ × 100 | Base del sistema de scoring |
+
+---
+
+**RSI — niveles clave:**
+- **> 70:** Sobrecomprado (cuidado con Golden Cross en esta zona)
+- **30–70:** Zona neutra (señales más fiables)
+- **< 30:** Sobrevendido (cuidado con Death Cross en esta zona)
+
+**ADX — niveles clave:**
+- **< 20:** Sin tendencia (señales ignoradas)
+- **25–40:** Tendencia válida ✓
+- **> 40:** Tendencia muy fuerte (momentum alto)
+        """)
+
+    # -----------------------------------------------------------------------
+    # 9. Fuentes de datos y APIs
+    # -----------------------------------------------------------------------
+    with st.expander("9. Fuentes de datos y APIs externas"):
+        st.markdown("""
+| Fuente | Datos obtenidos | Frecuencia |
+|--------|----------------|-----------|
+| **Yahoo Finance** (yfinance) | Precios históricos OHLCV para todos los tickers | Diaria |
+| **Alpha Vantage** | Sentimiento de noticias, fundamentales (P/E, EPS, sector, market cap), Fed Funds Rate, CPI | Por señal detectada |
+| **Gemini 2.5 Flash** (Google AI) | Análisis narrativo de 3 puntos con Google Search grounding | Por señal detectada |
+| **Supabase** | Base de datos PostgreSQL — almacenamiento de señales y ejecuciones | Lectura en tiempo real |
+| **Telegram Bot** | Alertas push cuando se detecta una nueva señal | Inmediata tras detección |
+
+---
+
+**Limitaciones conocidas:**
+- Alpha Vantage (plan gratuito): máximo 5 peticiones/minuto → el pipeline añade pausa de 12 segundos entre llamadas.
+- Gemini: si el Google Search grounding no está disponible en la región, el análisis se genera sin búsqueda web en tiempo real (se indica en el análisis).
+- Yahoo Finance: los datos de preapertura / cierre pueden tardar hasta 15–30 minutos en actualizarse tras el cierre del mercado.
+        """)
+
+    # -----------------------------------------------------------------------
+    # 10. Cómo interpretar una señal completa
+    # -----------------------------------------------------------------------
+    with st.expander("10. Cómo leer una señal de principio a fin"):
+        st.markdown("""
+### Ejemplo paso a paso
+
+Imagina que aparece esta señal en el Radar Activo:
+
+```
+🟢 NVDA   ⭐⭐⭐🔥
+GOLDEN CROSS · 2026-05-08
+💰 $890.40  |  RSI 62  |  ADX 32  |  🏢 Technology  |  📰 Bullish
+```
+
+**Cómo leerlo:**
+
+1. **🟢 Golden Cross** → SMA 50 acaba de cruzar al alza la SMA 200: señal alcista.
+2. **⭐⭐⭐🔥 Scoring 3/3** → las medias están separadas más de 1.5%, el cruce está bien consolidado.
+3. **RSI 62** → momentum alcista sin estar sobrecomprado. Todavía hay recorrido.
+4. **ADX 32** → hay una tendencia real detrás, no es un movimiento lateral.
+5. **📰 Bullish** → el sentimiento de las últimas 5 noticias es favorable.
+
+**Lo que habría que mirar después:**
+- Ir al **Laboratorio** y buscar NVDA para ver el gráfico de velas con el cruce marcado.
+- Leer el análisis IA completo (los 3 puntos: TÉCNICO, FUNDAMENTAL, RIESGO).
+- Consultar la **Bitácora** para ver cómo se comportaron los cruces anteriores de NVDA.
+- Ver en el **Track Record** si el sector Tecnología tiene buen hit rate histórico.
+
+---
+
+### Señales de alerta (cuándo ser más cautos)
+
+- **Scoring 1 + RSI > 65** en Golden Cross → el cruce puede ser prematuro.
+- **ADX entre 25 y 27** → justo en el límite; tendencia débil.
+- **Volumen relativo entre 1.2× y 1.4×** → confirmación justa, no entusiasta.
+- **Sentimiento Bearish** con Golden Cross → el mercado no cree en el cruce.
+- **Earnings en menos de 2 semanas** → alta incertidumbre binaria.
+        """)
+
+    # -----------------------------------------------------------------------
+    # 11. Automatización y pipeline
+    # -----------------------------------------------------------------------
+    with st.expander("11. Automatización: cómo funciona el pipeline diario"):
+        st.markdown("""
+El pipeline se ejecuta automáticamente cada día via **GitHub Actions** a las **03:00 UTC (22:00 EST)**, justo después del cierre del mercado americano.
+
+### Pasos del pipeline (en orden)
+
+```
+1. Descarga OHLCV para los 75 tickers (Yahoo Finance)
+   └── Calcula SMA 50, SMA 200, RSI-14, ADX-14, VOL MA20
+
+2. Detección de cruces con sistema de filtros
+   ├── Filtro ADX ≥ 25
+   ├── Filtro Volumen ≥ 1.2× media 20d
+   └── Filtro RSI no extremo
+
+3. Si hay señales → obtiene contexto macro (Fed Rate, CPI)
+   └── Solo una vez, cacheado para todo el pipeline
+
+4. Por cada señal detectada:
+   ├── Obtiene sentimiento de noticias (Alpha Vantage)
+   ├── Obtiene fundamentales de la empresa (Alpha Vantage)
+   ├── Genera análisis IA (Gemini 2.5 Flash + Google Search)
+   ├── Guarda en Supabase
+   └── Envía alerta por Telegram
+
+5. Registra resumen de ejecución en Supabase
+   └── (tickers analizados, señales, errores, duración)
+```
+
+### Logs
+Cada ejecución genera un log en `logs/pipeline_YYYYMMDD.log` con el detalle completo de cada paso, incluyendo qué señales se descartaron y por qué filtro.
+
+### Si no hay señales
+El pipeline envía igualmente un **resumen diario por Telegram** indicando el número de tickers analizados y que no hubo señales ese día.
+        """)
+
+    # -----------------------------------------------------------------------
+    # 12. Preguntas frecuentes
+    # -----------------------------------------------------------------------
+    with st.expander("12. Preguntas frecuentes (FAQ)"):
+        st.markdown("""
+**¿Esto es un consejo de inversión?**
+No. DINERITO es una herramienta de análisis técnico cuantitativo. Las señales son puntos de partida para tu propio análisis, no recomendaciones de compra o venta.
+
+---
+
+**¿Por qué no hay señales hoy?**
+El sistema no fuerza señales. En un día normal, la mayoría de los 75 activos no producen ningún cruce que pase los 3 filtros. Que no haya señales es un resultado válido y frecuente.
+
+---
+
+**¿Qué significa "senal_ok" en la base de datos?**
+Es el campo de evaluación ex-post: se marca como `True` si el activo subió más de 0% en los 30 días siguientes a una Golden Cross (o bajó más de 0% en un Death Cross). Se calcula automáticamente cuando han pasado más de 30 días desde la señal.
+
+---
+
+**¿Por qué el análisis IA dice "sin acceso a búsqueda web"?**
+Significa que Gemini generó el análisis sin Google Search grounding (puede ocurrir por limitaciones regionales del plan de API). El análisis sigue siendo válido pero no incluye noticias en tiempo real de ese día.
+
+---
+
+**¿Cuántos tickers se analizan realmente cada día?**
+Los 75 configurados, salvo que se use la variable de entorno `TICKERS_TEST` para limitar el análisis a un subconjunto (útil para pruebas).
+
+---
+
+**¿Puedo añadir más tickers?**
+Sí. Edita la lista `TICKERS` en `src/config.py`. El único requisito es que el ticker esté disponible en Yahoo Finance.
+
+---
+
+**¿El sistema funciona en mercados no americanos?**
+No está diseñado para ello. Las medias SMA 50/200 están calibradas para el mercado americano (sesiones de lunes a viernes). Los datos fundamentales de Alpha Vantage sólo cubren acciones de EE.UU.
+        """)
+
+    st.divider()
+    st.caption("DINERITO · Pipeline automatizado de señales bursátiles · Actualizado diariamente a las 22:00 EST")
