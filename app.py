@@ -11,6 +11,7 @@ Pestaña 6: Backtesting     — análisis histórico 2015-hoy con equity curve
 import io
 import os
 import subprocess
+import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -411,7 +412,7 @@ with _hdr_right:
             _hdr_out = st.empty()
             _hdr_logs: list[str] = []
             _hdr_proc = subprocess.Popen(
-                ["python3", "main.py"],
+                [sys.executable, "main.py"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -493,7 +494,7 @@ with st.sidebar:
             output_box = st.empty()
             log_lines: list[str] = []
             proc = subprocess.Popen(
-                ["python3", "main.py"],
+                [sys.executable, "main.py"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -524,7 +525,7 @@ with st.sidebar:
         if st.button("🔄 Actualizar Seguimiento", use_container_width=True):
             with st.spinner("Actualizando seguimiento..."):
                 result = subprocess.run(
-                    ["python3", "src/tracker.py"],
+                    [sys.executable, "src/tracker.py"],
                     capture_output=True,
                     text=True,
                     cwd=str(Path(__file__).parent),
@@ -539,7 +540,7 @@ with st.sidebar:
             _bt_output = st.empty()
             _bt_logs: list[str] = []
             _bt_proc = subprocess.Popen(
-                ["python3", "-m", "src.backtester"],
+                [sys.executable, "-m", "src.backtester"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
