@@ -8,8 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import timedelta
 
+import numpy as np
 import pandas as pd
-import pandas_ta as ta
 import psycopg2
 import psycopg2.extras
 import yfinance as yf
@@ -147,23 +147,47 @@ def _download_full(ticker: str) -> pd.DataFrame | None:
     return df
 
 
+def _sma(series: pd.Series, n: int) -> pd.Series:
+    return series.rolling(n).mean()
+
+
+def _rsi(series: pd.Series, n: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(com=n - 1, min_periods=n).mean()
+    avg_loss = loss.ewm(com=n - 1, min_periods=n).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
+
+
+def _adx(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Series:
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs(),
+    ], axis=1).max(axis=1)
+
+    up   = high - high.shift()
+    down = low.shift() - low
+    plus_dm  = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+
+    atr       = tr.ewm(com=n - 1, min_periods=n).mean()
+    plus_di   = 100 * plus_dm.ewm(com=n - 1, min_periods=n).mean() / atr
+    minus_di  = 100 * minus_dm.ewm(com=n - 1, min_periods=n).mean() / atr
+    dx        = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    return dx.ewm(com=n - 1, min_periods=n).mean()
+
+
 def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Append SMA50/200, RSI14, ADX14, VOL_MA20 and drop NaN warm-up rows."""
     df = df.copy()
-    df["SMA_50"]  = ta.sma(df["Close"], length=50)
-    df["SMA_200"] = ta.sma(df["Close"], length=200)
-    df["RSI_14"]  = ta.rsi(df["Close"], length=14)
-
-    adx_df = ta.adx(df["High"], df["Low"], df["Close"], length=14)
-    if adx_df is not None:
-        adx_col = "ADX_14" if "ADX_14" in adx_df.columns else next(
-            (c for c in adx_df.columns if c.startswith("ADX")), None
-        )
-        df["ADX_14"] = adx_df[adx_col] if adx_col else float("nan")
-    else:
-        df["ADX_14"] = float("nan")
-
-    df["VOL_MA20"] = ta.sma(df["Volume"], length=20)
+    df["SMA_50"]  = _sma(df["Close"], 50)
+    df["SMA_200"] = _sma(df["Close"], 200)
+    df["RSI_14"]  = _rsi(df["Close"], 14)
+    df["ADX_14"]  = _adx(df["High"], df["Low"], df["Close"], 14)
+    df["VOL_MA20"] = _sma(df["Volume"], 20)
     df.dropna(subset=["SMA_50", "SMA_200", "RSI_14", "ADX_14", "VOL_MA20"], inplace=True)
     return df
 
