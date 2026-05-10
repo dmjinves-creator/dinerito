@@ -70,6 +70,30 @@ def _conn():
 # Write operations
 # ---------------------------------------------------------------------------
 
+def run_migrations() -> None:
+    """Add new trading-level columns to the senales table if they don't exist.
+
+    Safe to call multiple times — uses IF NOT EXISTS.
+    """
+    statements = [
+        "ALTER TABLE senales ADD COLUMN IF NOT EXISTS precio_entrada  DECIMAL(10,2)",
+        "ALTER TABLE senales ADD COLUMN IF NOT EXISTS precio_objetivo  DECIMAL(10,2)",
+        "ALTER TABLE senales ADD COLUMN IF NOT EXISTS precio_stop      DECIMAL(10,2)",
+        "ALTER TABLE senales ADD COLUMN IF NOT EXISTS ratio_rr         DECIMAL(4,2)",
+        "ALTER TABLE senales ADD COLUMN IF NOT EXISTS descartar        BOOLEAN DEFAULT false",
+    ]
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                for sql in statements:
+                    cur.execute(sql)
+            conn.commit()
+        logger.info("run_migrations: all ALTER TABLE executed successfully")
+    except Exception as exc:
+        logger.error("run_migrations failed: %s", exc)
+        raise
+
+
 def insertar_senal(senal: dict) -> bool:
     """Insert a detected signal into the senales table.
 
@@ -90,14 +114,16 @@ def insertar_senal(senal: dict) -> bool:
             rsi_14, adx_14, volumen_relativo, dist_sma_pct, scoring,
             sector, pe_ratio, eps, market_cap, earnings_date,
             news_sentiment, news_score, analisis_gemini,
-            fed_funds_rate, cpi_inflacion
+            fed_funds_rate, cpi_inflacion,
+            precio_entrada, precio_objetivo, precio_stop, ratio_rr, descartar
         ) VALUES (
             %(fecha_evento)s, %(ticker)s, %(tipo_evento)s,
             %(precio_cierre)s, %(sma_50)s, %(sma_200)s,
             %(rsi_14)s, %(adx_14)s, %(volumen_relativo)s, %(dist_sma_pct)s, %(scoring)s,
             %(sector)s, %(pe_ratio)s, %(eps)s, %(market_cap)s, %(earnings_date)s,
             %(news_sentiment)s, %(news_score)s, %(analisis_gemini)s,
-            %(fed_funds_rate)s, %(cpi_inflacion)s
+            %(fed_funds_rate)s, %(cpi_inflacion)s,
+            %(precio_entrada)s, %(precio_objetivo)s, %(precio_stop)s, %(ratio_rr)s, %(descartar)s
         )
         ON CONFLICT (fecha_evento, ticker, tipo_evento) DO NOTHING
     """
@@ -123,6 +149,11 @@ def insertar_senal(senal: dict) -> bool:
         "analisis_gemini":  senal.get("analisis_gemini"),
         "fed_funds_rate":   senal.get("fed_funds_rate"),
         "cpi_inflacion":    senal.get("cpi_inflacion"),
+        "precio_entrada":   senal.get("precio_entrada"),
+        "precio_objetivo":  senal.get("precio_objetivo"),
+        "precio_stop":      senal.get("precio_stop"),
+        "ratio_rr":         senal.get("ratio_rr"),
+        "descartar":        senal.get("descartar", False),
     }
     try:
         with _conn() as conn:
@@ -369,6 +400,30 @@ def get_stats_rendimiento() -> dict:
     except Exception as exc:
         logger.error("get_stats_rendimiento failed: %s", exc)
         return default
+
+
+def get_ultima_ejecucion() -> dict | None:
+    """Fetch the most recent pipeline execution log entry.
+
+    Returns:
+        Dict with keys: created_at, senales_detectadas, duracion_seg, estado.
+        None if the table is empty or on error.
+    """
+    sql = """
+        SELECT created_at, senales_detectadas, duracion_seg, estado
+        FROM ejecuciones_log
+        ORDER BY created_at DESC
+        LIMIT 1
+    """
+    try:
+        with _conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql)
+                row = cur.fetchone()
+        return dict(row) if row else None
+    except Exception as exc:
+        logger.error("get_ultima_ejecucion failed: %s", exc)
+        return None
 
 
 def get_senales_para_seguimiento() -> pd.DataFrame:

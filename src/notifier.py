@@ -15,7 +15,6 @@ _BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 _CHAT_ID:   str = os.getenv("TELEGRAM_CHAT_ID", "")
 _TG_API:    str = f"https://api.telegram.org/bot{_BOT_TOKEN}/sendMessage"
 
-# Updated to the real URL after deploying app.py to Streamlit Cloud
 _DASHBOARD_URL = os.getenv("STREAMLIT_URL", "https://tu-app.streamlit.app")
 
 
@@ -25,9 +24,6 @@ _DASHBOARD_URL = os.getenv("STREAMLIT_URL", "https://tu-app.streamlit.app")
 
 def _send(text: str) -> bool:
     """POST a message to the Telegram Bot API.
-
-    Uses Markdown parse mode (v1). Special characters in user-supplied text
-    (prices, percentages) are left unescaped — Markdown v1 is tolerant.
 
     Args:
         text: Message body in Telegram Markdown format.
@@ -75,19 +71,24 @@ def _send(text: str) -> bool:
 def enviar_alerta(senal: dict) -> bool:
     """Send a signal alert message to Telegram.
 
-    Message format follows the CLAUDE.md spec:
-      🟢/🔴 + 🔥 (scoring 3) header
-      Price, Scoring, RSI, ADX, Sector, News sentiment
-      Gemini analysis preview (first 300 chars)
-      Dashboard deep-link
+    Skips sending (and logs the reason) when senal['descartar'] is True.
 
     Args:
         senal: Enriched signal dict.  Required keys: ticker, tipo_evento,
-               precio_cierre, scoring.  All other keys fall back to 'N/A'/0.
+               precio_cierre, scoring.  All other keys fall back gracefully.
 
     Returns:
-        True if the message was delivered successfully.
+        True if the message was delivered successfully, False otherwise.
     """
+    # --- Skip discarded signals ---
+    if senal.get("descartar"):
+        ratio = senal.get("ratio_rr", 0)
+        logger.info(
+            "DESCARTADO %s — ratio R/R %.2f < 1.5, Telegram NO enviado",
+            senal.get("ticker", "?"), ratio,
+        )
+        return False
+
     ticker:    str   = senal.get("ticker", "???")
     tipo:      str   = senal.get("tipo_evento", "")
     scoring:   int   = int(senal.get("scoring", 1))
@@ -96,36 +97,58 @@ def enviar_alerta(senal: dict) -> bool:
     adx:       float = float(senal.get("adx_14", 0))
     sector:    str   = senal.get("sector", "N/A") or "N/A"
     sentiment: str   = senal.get("news_sentiment", "N/A") or "N/A"
-    analisis:  str   = senal.get("analisis_gemini") or "Sin análisis disponible."
     fecha:     str   = str(senal.get("fecha_evento", datetime.now().date()))
 
-    emoji      = "🟢" if tipo == "golden_cross" else "🔴"
-    fire       = " 🔥" if scoring == 3 else ""
-    tipo_label = tipo.replace("_", " ").upper()
+    # Separate analysis points
+    tecnico     = senal.get("analisis_tecnico",     "") or ""
+    fundamental = senal.get("analisis_fundamental", "") or ""
+    riesgo      = senal.get("analisis_riesgo",      "") or ""
 
-    # Truncate Gemini analysis to 300 chars to respect Telegram's 4096-char limit
-    analisis_preview = analisis[:300] + ("..." if len(analisis) > 300 else "")
+    # Trading levels
+    entrada  = float(senal.get("precio_entrada",  precio))
+    objetivo = float(senal.get("precio_objetivo", precio * 1.10))
+    stop     = float(senal.get("precio_stop",     precio * 0.95))
+    ratio_rr = float(senal.get("ratio_rr",        0))
+
+    pct_objetivo = ((objetivo - entrada) / entrada * 100) if entrada else 0
+    pct_stop     = ((stop     - entrada) / entrada * 100) if entrada else 0
+
+    # Emojis
+    emoji         = "🟢" if tipo == "golden_cross" else "🔴"
+    tipo_label    = tipo.replace("_", " ").upper()
+    scoring_emoji = "🔥" if scoring == 3 else ("⚡" if scoring == 2 else "·")
 
     text = (
-        f"{emoji} *{tipo_label}{fire}* — ${ticker}\n"
-        f"📅 {fecha}\n\n"
-        f"💰 *Precio:* ${precio:.2f}\n"
-        f"⭐ *Scoring:* {scoring}/3\n"
-        f"📊 *RSI:* {rsi:.0f} | *ADX:* {adx:.0f}\n"
-        f"🏢 *Sector:* {sector}\n"
-        f"📰 *Noticias:* {sentiment}\n\n"
-        f"🤖 *Análisis IA:*\n{analisis_preview}\n\n"
-        f"🔗 [Ver gráfico en dashboard]({_DASHBOARD_URL}?ticker={ticker})"
+        f"{emoji} *{tipo_label}* {scoring_emoji} — ${ticker}\n"
+        f"\n"
+        f"📅 {fecha}\n"
+        f"💰 Precio: ${precio:.2f}\n"
+        f"⭐ Scoring: {scoring}/3\n"
+        f"📊 RSI: {rsi:.0f} | ADX: {adx:.0f}\n"
+        f"🏢 Sector: {sector}\n"
+        f"📰 Noticias: {sentiment}\n"
+        f"\n"
+        f"🤖 *Análisis IA:*\n"
+        f"1️⃣ {tecnico}\n"
+        f"2️⃣ {fundamental}\n"
+        f"3️⃣ {riesgo}\n"
+        f"\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📈 *Entrada:*   ${entrada:.2f}\n"
+        f"🎯 *Objetivo:*  ${objetivo:.2f}  ({pct_objetivo:+.1f}%)\n"
+        f"🛑 *Stop Loss:* ${stop:.2f}  ({pct_stop:+.1f}%)\n"
+        f"⚖️ *Ratio R/R:* {ratio_rr:.1f}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"\n"
+        f"🔗 [Ver gráfico]({_DASHBOARD_URL}?ticker={ticker})"
     )
 
-    logger.info("Sending Telegram alert: %s %s scoring=%d", ticker, tipo, scoring)
+    logger.info("Sending Telegram alert: %s %s scoring=%d rr=%.2f", ticker, tipo, scoring, ratio_rr)
     return _send(text)
 
 
 def enviar_resumen_diario(n_senales: int, n_tickers: int, duracion: float) -> None:
     """Send a daily pipeline execution summary to Telegram.
-
-    Called at the end of main.py regardless of whether signals were found.
 
     Args:
         n_senales: Number of signals that passed all filters.

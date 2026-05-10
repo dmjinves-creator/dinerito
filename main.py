@@ -115,9 +115,10 @@ def run() -> None:
             logger.info("[%s] Enriqueciendo señal...", ticker)
             senal = enriquecer_senal(senal)
 
-            # 4b. Gemini AI analysis
+            # 4b. Gemini AI analysis — returns dict with analisis + trading levels
             logger.info("[%s] Generando análisis IA...", ticker)
-            senal["analisis_gemini"] = analizar_senal(senal)
+            ai_result = analizar_senal(senal)
+            senal.update(ai_result)
 
             # 4c. Persist to Supabase
             inserted = insertar_senal(senal)

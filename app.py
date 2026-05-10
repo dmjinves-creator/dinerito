@@ -1,13 +1,17 @@
-"""DINERITO — Dashboard Streamlit con 4 pestañas.
+"""DINERITO — Dashboard Streamlit con 5 pestañas.
 
 Pestaña 1: Radar Activo    — señales recientes con análisis IA
 Pestaña 2: Laboratorio     — gráfico de velas + SMA + RSI por ticker
 Pestaña 3: Bitácora        — tabla histórica filtrable + exportar CSV
 Pestaña 4: Track Record    — métricas de rendimiento y hit-rate
+Pestaña 5: Manual          — guía completa del sistema
 """
 
 import io
-from datetime import date, timedelta
+import os
+import subprocess
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -20,6 +24,7 @@ from src.database import (
     get_historico,
     get_senales_recientes,
     get_stats_rendimiento,
+    get_ultima_ejecucion,
 )
 
 # ---------------------------------------------------------------------------
@@ -27,25 +32,185 @@ from src.database import (
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Plataforma Bursátil IA",
+    page_title="DINERITO · Plataforma Bursátil IA",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 # ---------------------------------------------------------------------------
-# Shared style helpers
+# Design tokens
 # ---------------------------------------------------------------------------
 
-STAR_MAP = {1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐🔥"}
+COLORS = {
+    "primary":   "#00d4aa",
+    "bullish":   "#00ff88",
+    "bearish":   "#ff4444",
+    "sma50":     "#58a6ff",
+    "sma200":    "#f0883e",
+    "rsi":       "#bc8cff",
+    "gold":      "#ffd700",
+    "neutral":   "#8b9cbc",
+    "steelblue": "#388bfd",
+    "tomato":    "#ff6b6b",
+}
 
+SENTIMENT_COLORS = {
+    "Bullish": "#00ff88",
+    "Bearish": "#ff4444",
+    "Neutral": "#8b9cbc",
+}
+
+# ---------------------------------------------------------------------------
+# CSS global
+# ---------------------------------------------------------------------------
+
+def _inject_css() -> None:
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+
+    /* Ocultar branding Streamlit */
+    #MainMenu {visibility: hidden;}
+    footer     {visibility: hidden;}
+    header     {visibility: hidden;}
+
+    /* Tabs — estilo pill */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px;
+        background: #161b22;
+        border-radius: 12px;
+        padding: 5px;
+        border: 1px solid #30363d;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        color: #8b9cbc;
+        font-weight: 500;
+        padding: 6px 18px;
+        background: transparent;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #1f6feb !important;
+        color: white !important;
+    }
+
+    /* Metric cards */
+    [data-testid="metric-container"] {
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        padding: 20px !important;
+    }
+    [data-testid="stMetricLabel"] {
+        color: #8b9cbc !important;
+        font-size: 0.75em !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+    [data-testid="stMetricValue"] {
+        color: #e6edf3 !important;
+        font-size: 1.7em !important;
+        font-weight: 700 !important;
+    }
+
+    /* Expanders */
+    [data-testid="stExpander"] {
+        background: #161b22;
+        border: 1px solid #30363d !important;
+        border-radius: 10px;
+        margin-bottom: 8px;
+    }
+    .streamlit-expanderHeader {
+        font-weight: 600;
+        color: #c9d1d9 !important;
+    }
+
+    /* Download button */
+    .stDownloadButton > button {
+        background: #1f6feb;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        padding: 8px 22px;
+    }
+    .stDownloadButton > button:hover { background: #388bfd; }
+
+    /* Inputs / selects */
+    .stSelectbox > div > div,
+    .stMultiSelect > div > div {
+        background: #161b22 !important;
+        border-color: #30363d !important;
+    }
+
+    /* Radio */
+    .stRadio > div { gap: 6px; }
+
+    /* Slider thumb */
+    .stSlider [data-baseweb="slider"] [role="slider"] {
+        background: #00d4aa !important;
+        border-color: #00d4aa !important;
+    }
+
+    /* Alert banners */
+    .stAlert { border-radius: 10px; border: none; }
+
+    /* Dataframe */
+    .stDataFrame { border: 1px solid #30363d; border-radius: 10px; overflow: hidden; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track  { background: #0e1117; }
+    ::-webkit-scrollbar-thumb  { background: #30363d; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+    /* Headers */
+    h1, h2, h3 { color: #e6edf3 !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Header de marca
+# ---------------------------------------------------------------------------
+
+def _render_header() -> None:
+    st.markdown("""
+    <div style="
+        display:flex; align-items:center; justify-content:space-between;
+        background:#161b22; border:1px solid #30363d; border-radius:14px;
+        padding:16px 28px; margin-bottom:24px;
+    ">
+        <div style="display:flex; align-items:center; gap:14px;">
+            <span style="font-size:2em; line-height:1;">📈</span>
+            <div>
+                <h1 style="margin:0; color:#e6edf3; font-size:1.5em; font-weight:700;
+                           letter-spacing:-0.03em; line-height:1.1;">DINERITO</h1>
+                <p style="margin:2px 0 0; color:#8b9cbc; font-size:0.75em; font-weight:500;">
+                    Plataforma Bursátil IA &nbsp;·&nbsp; 75 activos monitorizados
+                </p>
+            </div>
+        </div>
+        <div style="text-align:right;">
+            <p style="margin:0; color:#00d4aa; font-size:0.82em; font-weight:700;
+                      letter-spacing:0.04em;">● PIPELINE ACTIVO</p>
+            <p style="margin:2px 0 0; color:#8b9cbc; font-size:0.72em;">
+                Actualización diaria · 22:00 EST
+            </p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Style helpers
+# ---------------------------------------------------------------------------
 
 def _safe_str(val, default: str = "N/A") -> str:
-    """Return str(val) unless val is None/NaN/empty — then return default.
-
-    pandas reads NULL columns as float('nan'), which is truthy, so
-    the plain `val or default` pattern fails for those values.
-    """
     if val is None:
         return default
     if isinstance(val, float) and pd.isna(val):
@@ -54,12 +219,39 @@ def _safe_str(val, default: str = "N/A") -> str:
     return s if s and s != "nan" else default
 
 
-def _scoring_badge(scoring: int) -> str:
-    return STAR_MAP.get(int(scoring), "⭐")
+def _scoring_dots(scoring: int, color: str) -> str:
+    filled = "●" * scoring
+    empty  = "○" * (3 - scoring)
+    return (
+        f'<span style="color:{color}; font-size:1.1em; letter-spacing:2px;">{filled}</span>'
+        f'<span style="color:#30363d; font-size:1.1em; letter-spacing:2px;">{empty}</span>'
+    )
 
 
-def _card_color(tipo: str) -> str:
-    return "#1a472a" if tipo == "golden_cross" else "#4a1c1c"
+def _rsi_color(rsi: float, tipo: str) -> str:
+    if tipo == "golden_cross":
+        return "#ff9f43" if rsi > 65 else COLORS["bullish"]
+    return "#ff9f43" if rsi < 35 else COLORS["bearish"]
+
+
+def _card_style(tipo: str) -> dict:
+    if tipo == "golden_cross":
+        return {
+            "bg":     "#0d1f17",
+            "border": "#1a3a2a",
+            "accent": COLORS["bullish"],
+            "glow":   "0 0 28px rgba(0,255,136,0.10)",
+            "emoji":  "🟢",
+            "label":  "GOLDEN CROSS",
+        }
+    return {
+        "bg":     "#1f0d0d",
+        "border": "#3a1a1a",
+        "accent": COLORS["bearish"],
+        "glow":   "0 0 28px rgba(255,68,68,0.10)",
+        "emoji":  "🔴",
+        "label":  "DEATH CROSS",
+    }
 
 
 def _render_signal_card(senal: dict) -> None:
@@ -73,29 +265,188 @@ def _render_signal_card(senal: dict) -> None:
     fecha     = str(senal.get("fecha_evento", ""))[:10]
     sentiment = _safe_str(senal.get("news_sentiment"), "N/A")
     analisis  = _safe_str(senal.get("analisis_gemini"), "Sin análisis disponible.")
-    emoji    = "🟢" if tipo == "golden_cross" else "🔴"
-    label    = tipo.replace("_", " ").upper()
-    color    = _card_color(tipo)
 
-    st.markdown(
-        f"""
-        <div style="background:{color};border-radius:10px;padding:16px;margin-bottom:12px;">
-          <h3 style="margin:0;color:white;">{emoji} {ticker} &nbsp; {_scoring_badge(scoring)}</h3>
-          <p style="color:#ccc;margin:4px 0;">{label} · {fecha}</p>
-          <p style="color:white;margin:4px 0;">
-            💰 <b>${precio:.2f}</b> &nbsp;|&nbsp;
-            RSI <b>{rsi:.0f}</b> &nbsp;|&nbsp;
-            ADX <b>{adx:.0f}</b> &nbsp;|&nbsp;
-            🏢 {sector} &nbsp;|&nbsp;
-            📰 {sentiment}
-          </p>
-          <hr style="border-color:#555;margin:8px 0;">
-          <p style="color:#ddd;font-size:0.85em;white-space:pre-wrap;">{analisis[:500]}{"..." if len(analisis) > 500 else ""}</p>
+    style    = _card_style(tipo)
+    dots     = _scoring_dots(scoring, style["accent"])
+    rsi_col  = _rsi_color(rsi, tipo)
+    sent_col = SENTIMENT_COLORS.get(sentiment, COLORS["neutral"])
+
+    st.markdown(f"""
+    <div style="
+        background:{style['bg']};
+        border:1px solid {style['border']};
+        border-left:4px solid {style['accent']};
+        border-radius:12px;
+        padding:20px 22px;
+        margin-bottom:8px;
+        box-shadow:{style['glow']};
+    ">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px;">
+            <div>
+                <h3 style="margin:0; color:#e6edf3; font-size:1.15em; font-weight:700; letter-spacing:-0.01em;">
+                    {style['emoji']} {ticker}
+                </h3>
+                <span style="color:{style['accent']}; font-size:0.75em; font-weight:700; letter-spacing:0.1em;">
+                    {style['label']}
+                </span>
+            </div>
+            <div style="text-align:right;">
+                <div style="margin-bottom:4px;">{dots}</div>
+                <p style="margin:0; color:#8b9cbc; font-size:0.73em; font-weight:500;">{fecha}</p>
+            </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
+        <div style="display:flex; gap:7px; flex-wrap:wrap;">
+            <span style="background:#1c2333; border:1px solid #30363d; border-radius:20px;
+                         padding:3px 11px; color:#e6edf3; font-size:0.78em; font-weight:600;">
+                💰 ${precio:.2f}
+            </span>
+            <span style="background:#1c2333; border:1px solid {rsi_col}33; border-radius:20px;
+                         padding:3px 11px; color:{rsi_col}; font-size:0.78em; font-weight:600;">
+                RSI {rsi:.0f}
+            </span>
+            <span style="background:#1c2333; border:1px solid #30363d; border-radius:20px;
+                         padding:3px 11px; color:#e6edf3; font-size:0.78em; font-weight:600;">
+                ADX {adx:.0f}
+            </span>
+            <span style="background:#1c2333; border:1px solid #30363d; border-radius:20px;
+                         padding:3px 11px; color:#8b9cbc; font-size:0.78em;">
+                🏢 {sector}
+            </span>
+            <span style="background:#1c2333; border:1px solid {sent_col}44; border-radius:20px;
+                         padding:3px 11px; color:{sent_col}; font-size:0.78em; font-weight:600;">
+                📰 {sentiment}
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.expander(f"🤖 Ver análisis IA completo — {ticker}"):
+        st.markdown(analisis)
+
+
+# ---------------------------------------------------------------------------
+# Shared column config helper
+# ---------------------------------------------------------------------------
+
+def _col_config_signals() -> dict:
+    return {
+        "fecha_evento":     st.column_config.DatetimeColumn("Fecha", format="DD/MM/YYYY"),
+        "ticker":           st.column_config.TextColumn("Ticker"),
+        "tipo_evento":      st.column_config.TextColumn("Tipo"),
+        "precio_cierre":    st.column_config.NumberColumn("Precio", format="$%.2f"),
+        "scoring":          st.column_config.NumberColumn("⭐", format="%d ★"),
+        "rsi_14":           st.column_config.NumberColumn("RSI", format="%.0f"),
+        "adx_14":           st.column_config.NumberColumn("ADX", format="%.0f"),
+        "volumen_relativo": st.column_config.NumberColumn("Vol Rel", format="%.2f×"),
+        "news_sentiment":   st.column_config.TextColumn("Sentimiento"),
+        "retorno_7d":       st.column_config.NumberColumn("Ret. 7d %", format="%.2f%%"),
+        "retorno_30d":      st.column_config.NumberColumn("Ret. 30d %", format="%.2f%%"),
+        "analisis_gemini":  st.column_config.TextColumn("Análisis IA", width="large"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# App bootstrap
+# ---------------------------------------------------------------------------
+
+_inject_css()
+_render_header()
+
+# ---------------------------------------------------------------------------
+# Sidebar — Última ejecución + Panel de Control (admin)
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.subheader("📊 Última ejecución")
+    try:
+        ultima = get_ultima_ejecucion()
+    except Exception:
+        ultima = None
+
+    if ultima:
+        created_at = ultima.get("created_at")
+        if created_at is not None:
+            if hasattr(created_at, "replace"):
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                horas_desde = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
+                fecha_str = created_at.strftime("%Y-%m-%d %H:%M")
+            else:
+                horas_desde = 0.0
+                fecha_str = str(created_at)[:16]
+        else:
+            horas_desde = 0.0
+            fecha_str = "—"
+
+        n_ej   = ultima.get("senales_detectadas", 0)
+        dur_ej = float(ultima.get("duracion_seg", 0))
+        est_ej = ultima.get("estado", "")
+
+        if horas_desde > 25:
+            st.error("⚠️ Pipeline no ejecutado en 25h")
+        elif est_ej in ("ok", "ok_sin_senales"):
+            st.success(f"✅ {fecha_str} — {n_ej} señales")
+        else:
+            st.warning(f"⚠️ {fecha_str} — estado: {est_ej}")
+
+        st.caption(f"Duración: {dur_ej:.0f}s | Señales: {n_ej}")
+    else:
+        st.info("Sin ejecuciones registradas")
+
+    # --- Admin Panel ---
+    try:
+        admin_mode = st.secrets.get("ADMIN_MODE", "false").lower() == "true"
+    except Exception:
+        admin_mode = os.getenv("ADMIN_MODE", "false").lower() == "true"
+
+    if admin_mode:
+        st.divider()
+        st.subheader("⚙️ Panel de Control")
+
+        if st.button("▶️ Ejecutar Pipeline Ahora", type="primary", use_container_width=True):
+            output_box = st.empty()
+            log_lines: list[str] = []
+            proc = subprocess.Popen(
+                ["python3", "main.py"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(Path(__file__).parent),
+            )
+            with st.spinner("Analizando 75 tickers..."):
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    log_lines.append(line.rstrip())
+                    output_box.code("\n".join(log_lines[-20:]))
+                proc.wait()
+
+            try:
+                ultima_post = get_ultima_ejecucion()
+            except Exception:
+                ultima_post = None
+
+            if ultima_post:
+                n_post   = ultima_post.get("senales_detectadas", 0)
+                dur_post = float(ultima_post.get("duracion_seg", 0))
+                est_post = ultima_post.get("estado", "")
+                if est_post in ("ok", "ok_sin_senales"):
+                    st.success(f"✅ Pipeline completado — {n_post} señales detectadas en {dur_post:.0f}s")
+                else:
+                    st.error(f"❌ Pipeline con errores — estado: {est_post}")
+            else:
+                st.warning("Pipeline finalizado — sin registro en log")
+
+        if st.button("🔄 Actualizar Seguimiento", use_container_width=True):
+            with st.spinner("Actualizando seguimiento..."):
+                result = subprocess.run(
+                    ["python3", "src/tracker.py"],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(Path(__file__).parent),
+                )
+            output = (result.stdout or "") + (result.stderr or "")
+            updated = output.lower().count("updated")
+            st.info(f"🔄 Seguimiento actualizado ({updated} señal(es) procesada(s))")
 
 # ---------------------------------------------------------------------------
 # Tab definitions
@@ -120,16 +471,32 @@ with tab1:
     horas_map = {"Últimas 24h": 24, "Últimas 48h": 48, "Últimos 7 días": 168}
     horas = horas_map[ventana_label]
 
-    df_recientes = get_senales_recientes(horas=horas)
+    with st.spinner("Cargando señales..."):
+        df_recientes = get_senales_recientes(horas=horas)
 
     if df_recientes.empty:
-        st.info(
-            f"Sin señales en las últimas {horas} horas. "
-            "El pipeline se ejecuta diariamente a las 22:00 EST.",
-            icon="💤",
-        )
+        st.markdown(f"""
+        <div style="
+            text-align:center; padding:52px 24px;
+            background:#161b22; border:1px dashed #30363d;
+            border-radius:14px; margin-top:16px;
+        ">
+            <div style="font-size:2.8em; margin-bottom:14px;">💤</div>
+            <p style="font-size:1em; font-weight:600; color:#c9d1d9; margin:0 0 6px;">
+                Sin señales en las últimas {horas}h
+            </p>
+            <p style="font-size:0.83em; color:#8b9cbc; margin:0;">
+                El pipeline se ejecuta cada día a las 22:00 EST
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        st.success(f"{len(df_recientes)} señal(es) detectada(s)")
+        gc = (df_recientes["tipo_evento"] == "golden_cross").sum()
+        dc = (df_recientes["tipo_evento"] == "death_cross").sum()
+        st.success(
+            f"{len(df_recientes)} señal(es) detectada(s) — "
+            f"🟢 {gc} Golden Cross · 🔴 {dc} Death Cross"
+        )
         for _, row in df_recientes.iterrows():
             _render_signal_card(row.to_dict())
 
@@ -158,27 +525,22 @@ with tab2:
     if df_chart.empty:
         st.error(f"No se pudieron obtener datos para {ticker_sel}")
     else:
-        # Flatten MultiIndex if present
         if isinstance(df_chart.columns, pd.MultiIndex):
             df_chart.columns = df_chart.columns.get_level_values(0)
 
         df_chart.index = pd.to_datetime(df_chart.index)
 
-        # Compute SMAs
         df_chart["SMA50"]  = df_chart["Close"].rolling(50).mean()
         df_chart["SMA200"] = df_chart["Close"].rolling(200).mean()
 
-        # Compute RSI-14
         delta  = df_chart["Close"].diff()
         gain   = delta.clip(lower=0).rolling(14).mean()
         loss   = (-delta.clip(upper=0)).rolling(14).mean()
         rs     = gain / loss.replace(0, float("nan"))
         df_chart["RSI"] = 100 - (100 / (1 + rs))
 
-        # Historical signals for this ticker
         df_sig = get_historico(ticker=ticker_sel)
 
-        # Build chart
         fig = make_subplots(
             rows=2, cols=1,
             shared_xaxes=True,
@@ -186,7 +548,6 @@ with tab2:
             vertical_spacing=0.04,
         )
 
-        # Candlestick
         fig.add_trace(
             go.Candlestick(
                 x=df_chart.index,
@@ -196,25 +557,25 @@ with tab2:
                 close=df_chart["Close"],
                 name=ticker_sel,
                 showlegend=False,
+                increasing_line_color=COLORS["bullish"],
+                decreasing_line_color=COLORS["bearish"],
             ),
             row=1, col=1,
         )
 
-        # SMA lines
         fig.add_trace(
             go.Scatter(x=df_chart.index, y=df_chart["SMA50"],
-                       line=dict(color="royalblue", width=1.5),
+                       line=dict(color=COLORS["sma50"], width=1.5),
                        name="SMA 50"),
             row=1, col=1,
         )
         fig.add_trace(
             go.Scatter(x=df_chart.index, y=df_chart["SMA200"],
-                       line=dict(color="orange", width=1.5),
+                       line=dict(color=COLORS["sma200"], width=1.5),
                        name="SMA 200"),
             row=1, col=1,
         )
 
-        # Signal markers
         if not df_sig.empty:
             df_sig["fecha_evento"] = pd.to_datetime(df_sig["fecha_evento"])
             golden = df_sig[df_sig["tipo_evento"] == "golden_cross"]
@@ -226,7 +587,7 @@ with tab2:
                         x=golden["fecha_evento"],
                         y=golden["precio_cierre"],
                         mode="markers",
-                        marker=dict(symbol="triangle-up", color="lime", size=12),
+                        marker=dict(symbol="triangle-up", color=COLORS["bullish"], size=13),
                         name="Golden Cross",
                     ),
                     row=1, col=1,
@@ -237,41 +598,45 @@ with tab2:
                         x=death["fecha_evento"],
                         y=death["precio_cierre"],
                         mode="markers",
-                        marker=dict(symbol="triangle-down", color="red", size=12),
+                        marker=dict(symbol="triangle-down", color=COLORS["bearish"], size=13),
                         name="Death Cross",
                     ),
                     row=1, col=1,
                 )
 
-        # RSI subplot
         fig.add_trace(
             go.Scatter(x=df_chart.index, y=df_chart["RSI"],
-                       line=dict(color="purple", width=1),
+                       line=dict(color=COLORS["rsi"], width=1.2),
                        name="RSI-14"),
             row=2, col=1,
         )
-        for level, color in [(70, "red"), (30, "green")]:
-            fig.add_hline(y=level, line_dash="dot", line_color=color,
-                          row=2, col=1)
+        for level, color in [(70, COLORS["bearish"]), (30, COLORS["bullish"])]:
+            fig.add_hline(y=level, line_dash="dot", line_color=color, row=2, col=1)
 
         fig.update_layout(
-            title=f"{ticker_sel} — {periodo_sel}",
-            height=600,
+            title=dict(text=f"{ticker_sel} — {periodo_sel}", font=dict(color="#e6edf3")),
+            height=620,
             xaxis_rangeslider_visible=False,
             template="plotly_dark",
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            paper_bgcolor="#0e1117",
+            plot_bgcolor="#0e1117",
         )
         fig.update_yaxes(title_text="RSI", row=2, col=1)
 
         st.plotly_chart(fig, use_container_width=True)
 
-        # Historical signals table for this ticker
         if not df_sig.empty:
             st.subheader(f"Señales históricas — {ticker_sel}")
             cols_show = ["fecha_evento", "tipo_evento", "precio_cierre",
                          "scoring", "rsi_14", "adx_14", "retorno_7d", "retorno_30d"]
             cols_present = [c for c in cols_show if c in df_sig.columns]
-            st.dataframe(df_sig[cols_present], use_container_width=True)
+            st.dataframe(
+                df_sig[cols_present],
+                column_config=_col_config_signals(),
+                hide_index=True,
+                use_container_width=True,
+            )
         else:
             st.info("Sin señales históricas registradas para este ticker.")
 
@@ -293,7 +658,8 @@ with tab3:
     ticker_arg = tickers_filter[0] if len(tickers_filter) == 1 else None
     tipo_arg   = None if tipo_filter == "Todos" else tipo_filter
 
-    df_hist = get_historico(ticker=ticker_arg, tipo=tipo_arg, scoring_min=scoring_min)
+    with st.spinner("Cargando bitácora..."):
+        df_hist = get_historico(ticker=ticker_arg, tipo=tipo_arg, scoring_min=scoring_min)
 
     if not df_hist.empty and tickers_filter and len(tickers_filter) > 1:
         df_hist = df_hist[df_hist["ticker"].isin(tickers_filter)]
@@ -321,7 +687,12 @@ with tab3:
     if df_hist.empty:
         st.info("Sin señales para los filtros seleccionados.")
     else:
-        st.dataframe(df_hist[cols_present], use_container_width=True)
+        st.dataframe(
+            df_hist[cols_present],
+            column_config=_col_config_signals(),
+            hide_index=True,
+            use_container_width=True,
+        )
 
         csv_buf = io.StringIO()
         df_hist[cols_present].to_csv(csv_buf, index=False)
@@ -339,15 +710,22 @@ with tab3:
 with tab4:
     st.header("🏆 Track Record")
 
-    stats = get_stats_rendimiento()
+    with st.spinner("Calculando métricas..."):
+        stats = get_stats_rendimiento()
 
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     col_m1.metric("Total señales evaluadas", stats["total_senales"])
     col_m2.metric("Hit Rate", f"{stats['hit_rate']:.1f}%")
-    col_m3.metric("Retorno medio 30d", f"{stats['retorno_medio_30d']:+.2f}%")
+    col_m3.metric(
+        "Retorno medio 30d",
+        f"{stats['retorno_medio_30d']:+.2f}%",
+        delta=f"{stats['retorno_medio_30d']:+.2f}%",
+        delta_color="normal",
+    )
     col_m4.metric("Mejor sector", stats["mejor_sector"])
 
-    df_tr = get_historico(scoring_min=1)
+    with st.spinner("Cargando datos de rendimiento..."):
+        df_tr = get_historico(scoring_min=1)
 
     if df_tr.empty or "senal_ok" not in df_tr.columns:
         st.info("Sin datos suficientes todavía (las señales necesitan >30 días para evaluarse).")
@@ -359,11 +737,13 @@ with tab4:
         else:
             df_eval["fecha_evento"] = pd.to_datetime(df_eval["fecha_evento"])
 
-            # --- Scatter: dist_sma_pct vs retorno_30d ---
             if "dist_sma_pct" in df_eval.columns and "retorno_30d" in df_eval.columns:
                 st.subheader("Señal vs Retorno 30d")
                 fig_scatter = go.Figure()
-                for tipo, color in [("golden_cross", "lime"), ("death_cross", "tomato")]:
+                for tipo, color in [
+                    ("golden_cross", COLORS["bullish"]),
+                    ("death_cross",  COLORS["tomato"]),
+                ]:
                     sub = df_eval[df_eval["tipo_evento"] == tipo]
                     if not sub.empty:
                         fig_scatter.add_trace(go.Scatter(
@@ -373,7 +753,8 @@ with tab4:
                             marker=dict(
                                 color=color,
                                 size=sub["adx_14"].clip(lower=8, upper=40) if "adx_14" in sub.columns else 10,
-                                opacity=0.7,
+                                opacity=0.75,
+                                line=dict(color="#0e1117", width=1),
                             ),
                             text=sub["ticker"],
                             name=tipo.replace("_", " ").title(),
@@ -382,12 +763,13 @@ with tab4:
                     xaxis_title="Distancia SMA (%)",
                     yaxis_title="Retorno 30d (%)",
                     template="plotly_dark",
-                    height=400,
+                    height=420,
+                    paper_bgcolor="#0e1117",
+                    plot_bgcolor="#161b22",
                 )
-                fig_scatter.add_hline(y=0, line_dash="dot", line_color="gray")
+                fig_scatter.add_hline(y=0, line_dash="dot", line_color=COLORS["neutral"])
                 st.plotly_chart(fig_scatter, use_container_width=True)
 
-            # --- Bar: hit rate por sector ---
             if "sector" in df_eval.columns:
                 st.subheader("Hit Rate por Sector")
                 sector_stats = (
@@ -396,23 +778,29 @@ with tab4:
                     .reset_index()
                     .sort_values("hit_rate", ascending=False)
                 )
-                sector_stats = sector_stats[sector_stats["sector"].notna() & (sector_stats["sector"] != "N/A")]
+                sector_stats = sector_stats[
+                    sector_stats["sector"].notna() & (sector_stats["sector"] != "N/A")
+                ]
                 if not sector_stats.empty:
                     fig_bar = go.Figure(go.Bar(
                         x=sector_stats["sector"],
                         y=sector_stats["hit_rate"],
-                        marker_color="steelblue",
+                        marker_color=COLORS["steelblue"],
+                        marker_line_color="#0e1117",
+                        marker_line_width=1,
                         text=sector_stats["n"].apply(lambda n: f"n={n}"),
                         textposition="outside",
+                        textfont=dict(color="#8b9cbc", size=11),
                     ))
                     fig_bar.update_layout(
                         yaxis_title="Hit Rate (%)",
                         template="plotly_dark",
-                        height=350,
+                        height=370,
+                        paper_bgcolor="#0e1117",
+                        plot_bgcolor="#161b22",
                     )
                     st.plotly_chart(fig_bar, use_container_width=True)
 
-            # --- Line: cumulative hit rate over time ---
             st.subheader("Evolución del Hit Rate acumulado")
             df_sorted = df_eval.sort_values("fecha_evento")
             df_sorted["cum_ok"]    = (df_sorted["senal_ok"] == True).cumsum()
@@ -423,14 +811,22 @@ with tab4:
                 x=df_sorted["fecha_evento"],
                 y=df_sorted["cum_hr"],
                 mode="lines+markers",
-                line=dict(color="gold", width=2),
+                line=dict(color=COLORS["gold"], width=2.2),
+                marker=dict(size=5, color=COLORS["gold"]),
                 name="Hit Rate acumulado",
+                fill="tozeroy",
+                fillcolor="rgba(255,215,0,0.06)",
             ))
-            fig_line.add_hline(y=50, line_dash="dot", line_color="gray", annotation_text="50%")
+            fig_line.add_hline(
+                y=50, line_dash="dot", line_color=COLORS["neutral"],
+                annotation_text="50%", annotation_font_color=COLORS["neutral"],
+            )
             fig_line.update_layout(
                 yaxis_title="Hit Rate acumulado (%)",
                 template="plotly_dark",
-                height=350,
+                height=370,
+                paper_bgcolor="#0e1117",
+                plot_bgcolor="#161b22",
             )
             st.plotly_chart(fig_line, use_container_width=True)
 
@@ -442,9 +838,6 @@ with tab5:
     st.header("📖 Manual de Usuario — DINERITO")
     st.caption("Guía completa del sistema de detección de señales bursátiles con IA")
 
-    # -----------------------------------------------------------------------
-    # 1. Qué es DINERITO
-    # -----------------------------------------------------------------------
     with st.expander("1. ¿Qué es DINERITO?", expanded=True):
         st.markdown("""
 **DINERITO** es una plataforma de análisis bursátil automatizada que monitoriza **75 activos del mercado americano** (acciones, ETFs e índices) en busca de señales técnicas de alta probabilidad.
@@ -460,9 +853,6 @@ Cada día a las **22:00 EST** un pipeline automatizado:
 El objetivo es **encontrar señales de tendencia real** antes de que el movimiento ya esté descontado por el mercado.
         """)
 
-    # -----------------------------------------------------------------------
-    # 2. Las señales: Golden Cross y Death Cross
-    # -----------------------------------------------------------------------
     with st.expander("2. Las señales: Golden Cross y Death Cross"):
         col_gc, col_dc = st.columns(2)
         with col_gc:
@@ -497,18 +887,12 @@ Se produce cuando la **SMA de 50 sesiones cruza a la baja** la SMA de 200 sesion
 Son las referencias más seguidas por gestores institucionales y fondos. Cuando se cruzan, una parte del mercado reacciona automáticamente (stops, rebalanceos), lo que crea momentum adicional.
         """)
 
-    # -----------------------------------------------------------------------
-    # 3. Sistema de filtros anti-ruido
-    # -----------------------------------------------------------------------
     with st.expander("3. Sistema de filtros anti-ruido (por qué no toda señal pasa)"):
         st.markdown("""
 Un cruce de medias en solitario tiene una tasa de falsas señales muy alta. DINERITO aplica **3 filtros en cascada** para quedarse sólo con los cruces de alta convicción:
-        """)
 
-        st.markdown("""
 ---
 #### Filtro 1 — Fuerza de tendencia: ADX ≥ 25
-El **ADX (Average Directional Index)** mide la fuerza de una tendencia, independientemente de su dirección.
 
 | ADX | Interpretación |
 |-----|---------------|
@@ -517,327 +901,131 @@ El **ADX (Average Directional Index)** mide la fuerza de una tendencia, independ
 | **≥ 25** | **Tendencia válida ✓** |
 | ≥ 40 | Tendencia muy fuerte |
 
-**¿Por qué?** Un cruce en mercado lateral produce muchas señales falsas (whipsaws). El ADX ≥ 25 garantiza que hay una tendencia real detrás del cruce.
-
 ---
 #### Filtro 2 — Confirmación de volumen: Vol ≥ 1.2× su media de 20 días
-El precio se mueve donde va el dinero. Si el cruce ocurre con **volumen inferior a la media**, hay pocas probabilidades de continuación.
 
-- **Volumen relativo < 1.2×** → señal descartada (sin convicción)
+- **Volumen relativo < 1.2×** → señal descartada
 - **Volumen relativo ≥ 1.2×** → señal con participación institucional potencial ✓
 
 ---
 #### Filtro 3 — RSI no en zona extrema opuesta
-Evita entrar en el peor momento del ciclo:
 
-- **Golden Cross:** RSI ≤ 75 (si el RSI ya es > 75 el activo está sobrecomprado; el cruce llega tarde)
-- **Death Cross:** RSI ≥ 25 (si el RSI ya es < 25 el activo está sobrevendido; el cruce llega tarde)
-
-**Resultado:** sólo pasan los cruces donde todavía hay recorrido en la dirección de la señal.
+- **Golden Cross:** RSI ≤ 75
+- **Death Cross:** RSI ≥ 25
 
 ---
         """)
-
         st.success("Un cruce que pasa los 3 filtros tiene históricamente una tasa de acierto muy superior a un cruce sin filtrar.")
 
-    # -----------------------------------------------------------------------
-    # 4. Sistema de scoring (1-3 estrellas)
-    # -----------------------------------------------------------------------
-    with st.expander("4. Sistema de Scoring (⭐ / ⭐⭐ / ⭐⭐⭐🔥)"):
+    with st.expander("4. Sistema de Scoring (● / ●● / ●●●)"):
         st.markdown("""
-Una vez que una señal pasa los 3 filtros, recibe una **puntuación de 1 a 3** basada en la **distancia porcentual entre las dos medias**:
-
-```
-dist_sma_pct = ((SMA₅₀ - SMA₂₀₀) / SMA₂₀₀) × 100
-```
-
 | Distancia |  Scoring | Interpretación |
 |-----------|---------|---------------|
-| dist < 0.5%  | ⭐ (1/3) | Cruce reciente, medias casi en contacto — señal débil |
-| 0.5% ≤ dist < 1.5% | ⭐⭐ (2/3) | Separación moderada — señal media |
-| dist ≥ 1.5% | ⭐⭐⭐🔥 (3/3) | Medias bien separadas — señal fuerte |
-
-**Cuanto mayor es la separación, más confirmado está el cambio de tendencia.** Un scoring 3 indica que las medias llevan varios días divergiendo, lo que reduce la probabilidad de una reversión inmediata.
+| dist < 0.5%  | ● (1/3) | Cruce reciente — señal débil |
+| 0.5% ≤ dist < 1.5% | ●● (2/3) | Separación moderada — señal media |
+| dist ≥ 1.5% | ●●● (3/3) | Medias bien separadas — señal fuerte |
 
 > Consejo: filtra por scoring ≥ 2 en la Bitácora para concentrarte en las señales con más convicción.
         """)
 
-    # -----------------------------------------------------------------------
-    # 5. Análisis IA: los 3 puntos
-    # -----------------------------------------------------------------------
     with st.expander("5. Análisis IA — cómo interpretar los 3 puntos"):
         st.markdown("""
-Cada señal que supera los filtros recibe un análisis generado por **Gemini 2.5 Flash** (Google). El modelo recibe todos los datos técnicos, fundamentales y macroeconómicos y devuelve exactamente **3 puntos**:
+Cada señal recibe un análisis de **Gemini 2.5 Flash** con exactamente **3 puntos**:
 
----
-#### 1. TÉCNICO
-¿El contexto de precio justifica o contradice el cruce?
+**1. TÉCNICO** — ¿el contexto de precio justifica el cruce?
 
-El modelo evalúa si el cruce es coherente con la acción del precio reciente: ¿lleva semanas subiendo? ¿hay resistencias cercanas? ¿el RSI acompaña?
+**2. FUNDAMENTAL** — ¿hay un catalizador real? (usa Google Search en tiempo real)
 
----
-#### 2. FUNDAMENTAL
-¿Hay un catalizador real detrás del movimiento?
-
-El modelo usa búsqueda web en tiempo real (Google Search grounding) para identificar si hay noticias recientes, resultados de earnings, cambios en la dirección o eventos corporativos que expliquen el movimiento.
-
----
-#### 3. RIESGO
-Principal amenaza a vigilar en las próximas 4 semanas.
-
-Puede ser un earnings date cercano, un sector en corrección, tipo de interés, riesgo regulatorio, o simplemente que la valoración ya descuenta mucho optimismo.
-
----
-
-**Datos que recibe el modelo:**
-- Precio de cierre, SMA 50/200, RSI-14, ADX-14, volumen relativo
-- Scoring y distancia entre medias
-- Sector, P/E ratio, EPS, capitalización bursátil
-- Sentimiento de las últimas 5 noticias (Alpha Vantage)
-- Fed Funds Rate y CPI del mes en curso
+**3. RIESGO** — principal amenaza a vigilar en las próximas 4 semanas.
         """)
 
-    # -----------------------------------------------------------------------
-    # 6. Guía de las 4 pestañas
-    # -----------------------------------------------------------------------
     with st.expander("6. Guía de las 4 pestañas principales"):
         st.markdown("""
-### 📡 Radar Activo
-Muestra las señales detectadas en el último periodo seleccionado (24h / 48h / 7 días).
-
-**Cuándo usarlo:** primera cosa que consultar cada mañana. Si hay señales nuevas, aparecen aquí con su análisis IA completo.
-
-**Tip:** si no hay señales, es buena señal — el sistema no fuerza entradas. El mercado no siempre da oportunidades de alta calidad.
-
----
-### 📊 Laboratorio de Gráficos
-Gráfico interactivo de velas japonesas para cualquier ticker del universo, con:
-- **SMA 50** (azul) y **SMA 200** (naranja) superpuestas
-- **RSI-14** en panel inferior con niveles 30/70
-- **Marcadores de señales históricas** (triángulos verdes = Golden Cross, rojos = Death Cross)
-- Tabla de señales históricas del ticker seleccionado
-
-**Cuándo usarlo:** para validar visualmente una señal o estudiar el historial de cruces de un activo concreto.
-
----
-### 📋 Bitácora
-Histórico completo y filtrable de todas las señales detectadas. Filtros disponibles:
-- **Tickers** (uno o varios)
-- **Tipo de señal** (Golden Cross / Death Cross / Todos)
-- **Scoring mínimo** (1, 2 o 3)
-- **Rango de fechas** (desde / hasta)
-
-**Exportación:** botón CSV para descargar el conjunto filtrado.
-
-**Cuándo usarlo:** análisis retrospectivo, backtesting manual, o para compartir señales.
-
----
-### 🏆 Track Record
-Métricas de rendimiento histórico del sistema:
-
-| Métrica | Descripción |
-|---------|-------------|
-| **Total señales evaluadas** | Señales con más de 30 días de antigüedad |
-| **Hit Rate** | % de señales con retorno positivo a 30 días |
-| **Retorno medio 30d** | Retorno medio de todas las señales evaluadas |
-| **Mejor sector** | Sector con mayor hit rate histórico |
-
-Incluye tres gráficos:
-1. **Scatter dist_sma vs retorno 30d** — correlación entre la fuerza del cruce y el retorno
-2. **Bar hit rate por sector** — qué sectores responden mejor a estas señales
-3. **Evolución del hit rate acumulado** — cómo mejora (o empeora) la tasa de acierto con el tiempo
-
-> Las señales necesitan **más de 30 días** desde su emisión para aparecer en el Track Record.
+| Pestaña | Cuándo usarla |
+|---------|--------------|
+| 📡 **Radar Activo** | Primera consulta del día. Señales de las últimas 24h/48h/7d. |
+| 📊 **Laboratorio** | Validar visualmente un cruce. Ver el gráfico de velas + RSI. |
+| 📋 **Bitácora** | Análisis retrospectivo. Exportar datos. Filtrar por ticker/tipo/scoring. |
+| 🏆 **Track Record** | Métricas de rendimiento histórico. Hit rate. Retorno medio. |
         """)
 
-    # -----------------------------------------------------------------------
-    # 7. Universo de activos
-    # -----------------------------------------------------------------------
     with st.expander("7. Universo de activos monitorizados (75 tickers)"):
         st.markdown("""
-El sistema analiza diariamente 75 activos divididos en 3 grupos:
-
-#### Mega-cap (20 acciones)
-Las 20 mayores empresas del S&P 500 por capitalización: AAPL, MSFT, NVDA, GOOGL, META, AMZN, TSLA, JPM, V, MA, UNH, JNJ, PG, HD, BAC, WMT, XOM, CVX, LLY, AVGO.
-
-#### Mid-cap Growth (40 acciones)
-Empresas de crecimiento de mediana capitalización con alta liquidez: COST, MRK, ABBV, CRM, ACN, AMD, NFLX, TMO, PEP, KO, ADBE, CSCO, MCD, ABT, WFC, TXN, NEE, LIN, PM, DHR, INTC, RTX, HON, UPS, IBM, CAT, SBUX, GS, BKNG, SPGI, AMGN, MDT, ISRG, NOW, PANW, UBER, SHOP, SQ, SNOW, ARM.
-
-#### ETFs sectoriales (10)
-XLK (Tecnología), XLF (Financiero), XLE (Energía), XLV (Salud), XLY (Consumo discrecional), XLI (Industrial), XLP (Consumo básico), XLU (Utilities), XLB (Materiales), XLRE (Inmobiliario).
-
-#### Índices de mercado (5)
-SPY (S&P 500), QQQ (Nasdaq 100), DIA (Dow Jones), IWM (Russell 2000), VTI (Total Market).
-
----
-**¿Por qué ETFs e índices?** Los cruces en ETFs sectoriales señalan rotaciones de capital entre sectores, que a menudo preceden movimientos en las acciones individuales del sector.
+- **Mega-cap (20):** AAPL, MSFT, NVDA, GOOGL, META, AMZN, TSLA, JPM, V, MA, UNH, JNJ, PG, HD, BAC, WMT, XOM, CVX, LLY, AVGO
+- **Mid-cap Growth (40):** COST, MRK, ABBV, CRM, ACN, AMD, NFLX, TMO, PEP, KO, ADBE, CSCO, MCD, ABT, WFC, TXN, NEE, LIN, PM, DHR, INTC, RTX, HON, UPS, IBM, CAT, SBUX, GS, BKNG, SPGI, AMGN, MDT, ISRG, NOW, PANW, UBER, SHOP, SQ, SNOW, ARM
+- **ETFs sectoriales (10):** XLK, XLF, XLE, XLV, XLY, XLI, XLP, XLU, XLB, XLRE
+- **Índices (5):** SPY, QQQ, DIA, IWM, VTI
         """)
 
-    # -----------------------------------------------------------------------
-    # 8. Indicadores técnicos — glosario
-    # -----------------------------------------------------------------------
     with st.expander("8. Glosario de indicadores técnicos"):
         st.markdown("""
-| Indicador | Fórmula / Definición | Uso en DINERITO |
-|-----------|---------------------|-----------------|
-| **SMA 50** | Media aritmética de los últimos 50 cierres | Tendencia a corto-medio plazo |
-| **SMA 200** | Media aritmética de los últimos 200 cierres | Tendencia de largo plazo |
-| **RSI-14** | Índice de Fuerza Relativa (14 sesiones). 0-100. | Filtra entradas en zonas extremas |
-| **ADX-14** | Average Directional Index (14 sesiones). 0-100. | Confirma que hay tendencia real |
-| **VOL MA20** | Media de volumen de 20 días | Referencia para el filtro de volumen |
-| **Volumen relativo** | Volumen hoy ÷ VOL MA20 | Mide la convicción institucional |
-| **dist_sma_pct** | (SMA₅₀ - SMA₂₀₀) / SMA₂₀₀ × 100 | Base del sistema de scoring |
-
----
-
-**RSI — niveles clave:**
-- **> 70:** Sobrecomprado (cuidado con Golden Cross en esta zona)
-- **30–70:** Zona neutra (señales más fiables)
-- **< 30:** Sobrevendido (cuidado con Death Cross en esta zona)
-
-**ADX — niveles clave:**
-- **< 20:** Sin tendencia (señales ignoradas)
-- **25–40:** Tendencia válida ✓
-- **> 40:** Tendencia muy fuerte (momentum alto)
+| Indicador | Definición | Uso en DINERITO |
+|-----------|-----------|-----------------|
+| **SMA 50** | Media 50 cierres | Tendencia corto-medio plazo |
+| **SMA 200** | Media 200 cierres | Tendencia largo plazo |
+| **RSI-14** | Fuerza Relativa 14 sesiones (0–100) | Filtra zonas extremas |
+| **ADX-14** | Fuerza de tendencia (0–100) | Confirma tendencia real |
+| **Volumen relativo** | Vol hoy ÷ Vol MA20 | Convicción institucional |
+| **dist_sma_pct** | (SMA₅₀−SMA₂₀₀)/SMA₂₀₀×100 | Base del scoring |
         """)
 
-    # -----------------------------------------------------------------------
-    # 9. Fuentes de datos y APIs
-    # -----------------------------------------------------------------------
     with st.expander("9. Fuentes de datos y APIs externas"):
         st.markdown("""
-| Fuente | Datos obtenidos | Frecuencia |
-|--------|----------------|-----------|
-| **Yahoo Finance** (yfinance) | Precios históricos OHLCV para todos los tickers | Diaria |
-| **Alpha Vantage** | Sentimiento de noticias, fundamentales (P/E, EPS, sector, market cap), Fed Funds Rate, CPI | Por señal detectada |
-| **Gemini 2.5 Flash** (Google AI) | Análisis narrativo de 3 puntos con Google Search grounding | Por señal detectada |
-| **Supabase** | Base de datos PostgreSQL — almacenamiento de señales y ejecuciones | Lectura en tiempo real |
-| **Telegram Bot** | Alertas push cuando se detecta una nueva señal | Inmediata tras detección |
-
----
-
-**Limitaciones conocidas:**
-- Alpha Vantage (plan gratuito): máximo 5 peticiones/minuto → el pipeline añade pausa de 12 segundos entre llamadas.
-- Gemini: si el Google Search grounding no está disponible en la región, el análisis se genera sin búsqueda web en tiempo real (se indica en el análisis).
-- Yahoo Finance: los datos de preapertura / cierre pueden tardar hasta 15–30 minutos en actualizarse tras el cierre del mercado.
+| Fuente | Datos | Frecuencia |
+|--------|-------|-----------|
+| **Yahoo Finance** | Precios OHLCV | Diaria |
+| **Alpha Vantage** | Sentimiento, fundamentales, Fed Rate, CPI | Por señal |
+| **Gemini 2.5 Flash** | Análisis IA 3 puntos | Por señal |
+| **Supabase** | Base de datos PostgreSQL | Tiempo real |
+| **Telegram Bot** | Alertas push | Inmediata |
         """)
 
-    # -----------------------------------------------------------------------
-    # 10. Cómo interpretar una señal completa
-    # -----------------------------------------------------------------------
     with st.expander("10. Cómo leer una señal de principio a fin"):
         st.markdown("""
-### Ejemplo paso a paso
-
-Imagina que aparece esta señal en el Radar Activo:
-
 ```
-🟢 NVDA   ⭐⭐⭐🔥
+🟢 NVDA   ●●●
 GOLDEN CROSS · 2026-05-08
 💰 $890.40  |  RSI 62  |  ADX 32  |  🏢 Technology  |  📰 Bullish
 ```
 
-**Cómo leerlo:**
+1. **🟢 Golden Cross** → señal alcista
+2. **●●● Scoring 3/3** → cruce bien consolidado (dist ≥ 1.5%)
+3. **RSI 62** → momentum sin sobrecompra. Hay recorrido.
+4. **ADX 32** → tendencia real confirmada
+5. **📰 Bullish** → noticias favorables
 
-1. **🟢 Golden Cross** → SMA 50 acaba de cruzar al alza la SMA 200: señal alcista.
-2. **⭐⭐⭐🔥 Scoring 3/3** → las medias están separadas más de 1.5%, el cruce está bien consolidado.
-3. **RSI 62** → momentum alcista sin estar sobrecomprado. Todavía hay recorrido.
-4. **ADX 32** → hay una tendencia real detrás, no es un movimiento lateral.
-5. **📰 Bullish** → el sentimiento de las últimas 5 noticias es favorable.
-
-**Lo que habría que mirar después:**
-- Ir al **Laboratorio** y buscar NVDA para ver el gráfico de velas con el cruce marcado.
-- Leer el análisis IA completo (los 3 puntos: TÉCNICO, FUNDAMENTAL, RIESGO).
-- Consultar la **Bitácora** para ver cómo se comportaron los cruces anteriores de NVDA.
-- Ver en el **Track Record** si el sector Tecnología tiene buen hit rate histórico.
-
----
-
-### Señales de alerta (cuándo ser más cautos)
-
-- **Scoring 1 + RSI > 65** en Golden Cross → el cruce puede ser prematuro.
-- **ADX entre 25 y 27** → justo en el límite; tendencia débil.
-- **Volumen relativo entre 1.2× y 1.4×** → confirmación justa, no entusiasta.
-- **Sentimiento Bearish** con Golden Cross → el mercado no cree en el cruce.
-- **Earnings en menos de 2 semanas** → alta incertidumbre binaria.
+**Siguiente paso:** Laboratorio → buscar NVDA → expandir análisis IA.
         """)
 
-    # -----------------------------------------------------------------------
-    # 11. Automatización y pipeline
-    # -----------------------------------------------------------------------
     with st.expander("11. Automatización: cómo funciona el pipeline diario"):
         st.markdown("""
-El pipeline se ejecuta automáticamente cada día via **GitHub Actions** a las **03:00 UTC (22:00 EST)**, justo después del cierre del mercado americano.
-
-### Pasos del pipeline (en orden)
+Pipeline via **GitHub Actions** a las **03:00 UTC (22:00 EST)**:
 
 ```
-1. Descarga OHLCV para los 75 tickers (Yahoo Finance)
-   └── Calcula SMA 50, SMA 200, RSI-14, ADX-14, VOL MA20
-
-2. Detección de cruces con sistema de filtros
-   ├── Filtro ADX ≥ 25
-   ├── Filtro Volumen ≥ 1.2× media 20d
-   └── Filtro RSI no extremo
-
-3. Si hay señales → obtiene contexto macro (Fed Rate, CPI)
-   └── Solo una vez, cacheado para todo el pipeline
-
-4. Por cada señal detectada:
-   ├── Obtiene sentimiento de noticias (Alpha Vantage)
-   ├── Obtiene fundamentales de la empresa (Alpha Vantage)
-   ├── Genera análisis IA (Gemini 2.5 Flash + Google Search)
-   ├── Guarda en Supabase
-   └── Envía alerta por Telegram
-
-5. Registra resumen de ejecución en Supabase
-   └── (tickers analizados, señales, errores, duración)
+1. Descarga OHLCV 75 tickers → calcula indicadores
+2. Detección de cruces + 3 filtros (ADX / Volumen / RSI)
+3. Contexto macro: Fed Rate + CPI (cacheado)
+4. Por señal: noticias + fundamentales + análisis Gemini → Supabase + Telegram
+5. Log de ejecución en Supabase
 ```
-
-### Logs
-Cada ejecución genera un log en `logs/pipeline_YYYYMMDD.log` con el detalle completo de cada paso, incluyendo qué señales se descartaron y por qué filtro.
-
-### Si no hay señales
-El pipeline envía igualmente un **resumen diario por Telegram** indicando el número de tickers analizados y que no hubo señales ese día.
         """)
 
-    # -----------------------------------------------------------------------
-    # 12. Preguntas frecuentes
-    # -----------------------------------------------------------------------
     with st.expander("12. Preguntas frecuentes (FAQ)"):
         st.markdown("""
 **¿Esto es un consejo de inversión?**
-No. DINERITO es una herramienta de análisis técnico cuantitativo. Las señales son puntos de partida para tu propio análisis, no recomendaciones de compra o venta.
+No. DINERITO es análisis técnico cuantitativo. Las señales son puntos de partida, no recomendaciones.
 
 ---
-
 **¿Por qué no hay señales hoy?**
-El sistema no fuerza señales. En un día normal, la mayoría de los 75 activos no producen ningún cruce que pase los 3 filtros. Que no haya señales es un resultado válido y frecuente.
+El sistema no fuerza señales. Que no haya es un resultado válido y frecuente.
 
 ---
-
-**¿Qué significa "senal_ok" en la base de datos?**
-Es el campo de evaluación ex-post: se marca como `True` si el activo subió más de 0% en los 30 días siguientes a una Golden Cross (o bajó más de 0% en un Death Cross). Se calcula automáticamente cuando han pasado más de 30 días desde la señal.
-
----
-
-**¿Por qué el análisis IA dice "sin acceso a búsqueda web"?**
-Significa que Gemini generó el análisis sin Google Search grounding (puede ocurrir por limitaciones regionales del plan de API). El análisis sigue siendo válido pero no incluye noticias en tiempo real de ese día.
-
----
-
-**¿Cuántos tickers se analizan realmente cada día?**
-Los 75 configurados, salvo que se use la variable de entorno `TICKERS_TEST` para limitar el análisis a un subconjunto (útil para pruebas).
-
----
-
 **¿Puedo añadir más tickers?**
-Sí. Edita la lista `TICKERS` en `src/config.py`. El único requisito es que el ticker esté disponible en Yahoo Finance.
+Sí. Edita `TICKERS` en `src/config.py`. Requisito: ticker disponible en Yahoo Finance.
 
 ---
-
 **¿El sistema funciona en mercados no americanos?**
-No está diseñado para ello. Las medias SMA 50/200 están calibradas para el mercado americano (sesiones de lunes a viernes). Los datos fundamentales de Alpha Vantage sólo cubren acciones de EE.UU.
+No. Las SMA 50/200 y los fundamentales de Alpha Vantage están calibrados para el mercado americano.
         """)
 
     st.divider()
