@@ -1,5 +1,6 @@
 yfinance>=0.2.40
 pandas>=2.0.0
+pandas_ta>=0.3.14b
 google-genai>=1.0.0
 psycopg2-binary>=2.9.0
 python-dotenv>=1.0.0
