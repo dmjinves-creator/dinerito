@@ -1,10 +1,11 @@
-"""DINERITO — Dashboard Streamlit con 5 pestañas.
+"""DINERITO — Dashboard Streamlit con 6 pestañas.
 
 Pestaña 1: Radar Activo    — señales recientes con análisis IA
 Pestaña 2: Laboratorio     — gráfico de velas + SMA + RSI por ticker
 Pestaña 3: Bitácora        — tabla histórica filtrable + exportar CSV
 Pestaña 4: Track Record    — métricas de rendimiento y hit-rate
 Pestaña 5: Manual          — guía completa del sistema
+Pestaña 6: Backtesting     — análisis histórico 2015-hoy con equity curve
 """
 
 import io
@@ -25,6 +26,13 @@ from src.database import (
     get_senales_recientes,
     get_stats_rendimiento,
     get_ultima_ejecucion,
+)
+from src.backtest_stats import (
+    backtest_table_exists,
+    compute_stats,
+    get_all_sectors,
+    get_all_years,
+    get_backtest_df,
 )
 
 # ---------------------------------------------------------------------------
@@ -353,6 +361,70 @@ _inject_css()
 _render_header()
 
 # ---------------------------------------------------------------------------
+# Header extras: última actualización (expander) + forzar pipeline (botón)
+# ---------------------------------------------------------------------------
+
+try:
+    _hdr_ultima = get_ultima_ejecucion()
+except Exception:
+    _hdr_ultima = None
+
+try:
+    _hdr_admin = st.secrets.get("ADMIN_MODE", "false").lower() == "true"
+except Exception:
+    _hdr_admin = os.getenv("ADMIN_MODE", "false").lower() == "true"
+
+_hdr_left, _hdr_right = st.columns([5, 2])
+
+with _hdr_left:
+    with st.expander("🕐 Ver última actualización"):
+        if _hdr_ultima:
+            _ca = _hdr_ultima.get("created_at")
+            if _ca and hasattr(_ca, "strftime"):
+                if _ca.tzinfo is None:
+                    _ca = _ca.replace(tzinfo=timezone.utc)
+                _hdr_hrs = (datetime.now(timezone.utc) - _ca).total_seconds() / 3600
+                _hdr_fecha = _ca.strftime("%Y-%m-%d %H:%M UTC")
+            else:
+                _hdr_hrs = 0.0
+                _hdr_fecha = str(_ca)[:16] if _ca else "—"
+            _hdr_n   = int(_hdr_ultima.get("senales_detectadas", 0))
+            _hdr_dur = float(_hdr_ultima.get("duracion_seg", 0))
+            _hdr_est = _hdr_ultima.get("estado", "—")
+            _hdr_ok  = _hdr_est in ("ok", "ok_sin_senales")
+            st.markdown(f"""
+| | |
+|---|---|
+| **Fecha** | `{_hdr_fecha}` |
+| **Estado** | {"✅" if _hdr_ok else "⚠️"} `{_hdr_est}` |
+| **Señales detectadas** | `{_hdr_n}` |
+| **Duración** | `{_hdr_dur:.0f} seg` |
+| **Hace** | `{_hdr_hrs:.1f} horas` |
+""")
+        else:
+            st.info("Sin ejecuciones registradas.")
+
+with _hdr_right:
+    if _hdr_admin:
+        st.write("")
+        if st.button("⚡ Forzar pipeline", type="primary", use_container_width=True):
+            _hdr_out = st.empty()
+            _hdr_logs: list[str] = []
+            _hdr_proc = subprocess.Popen(
+                ["python3", "main.py"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(Path(__file__).parent),
+            )
+            with st.spinner("Ejecutando pipeline..."):
+                for _hdr_line in _hdr_proc.stdout:  # type: ignore[union-attr]
+                    _hdr_logs.append(_hdr_line.rstrip())
+                    _hdr_out.code("\n".join(_hdr_logs[-20:]))
+                _hdr_proc.wait()
+            st.success("Pipeline completado.")
+
+# ---------------------------------------------------------------------------
 # Sidebar — Última ejecución + Panel de Control (admin)
 # ---------------------------------------------------------------------------
 
@@ -447,12 +519,42 @@ with st.sidebar:
             updated = output.lower().count("updated")
             st.info(f"🔄 Seguimiento actualizado ({updated} señal(es) procesada(s))")
 
+        st.divider()
+        st.warning("⏱ Backtesting puede tardar 15-20 min para los 75 tickers.")
+        if st.button("🔬 Ejecutar Backtesting Completo", use_container_width=True):
+            _bt_output = st.empty()
+            _bt_logs: list[str] = []
+            _bt_proc = subprocess.Popen(
+                ["python3", "-m", "src.backtester"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(Path(__file__).parent),
+            )
+            with st.spinner("Ejecutando backtest 2015-hoy..."):
+                for _bt_line in _bt_proc.stdout:  # type: ignore[union-attr]
+                    _bt_logs.append(_bt_line.rstrip())
+                    _bt_output.code("\n".join(_bt_logs[-30:]))
+                _bt_proc.wait()
+            try:
+                _bt_df   = get_backtest_df()
+                _bt_st   = compute_stats(_bt_df)
+                _bt_hr   = _bt_st["hit_rate_global"]
+                _bt_rec  = (
+                    "✅ OPERAR" if _bt_hr >= 58
+                    else "⚠️ AJUSTAR FILTROS" if _bt_hr >= 50
+                    else "🛑 NO OPERAR"
+                )
+                st.success(f"Backtest completado — Hit Rate: {_bt_hr:.1f}% · {_bt_rec}")
+            except Exception:
+                st.success("Backtest completado. Abre la pestaña 🔬 Backtesting para ver resultados.")
+
 # ---------------------------------------------------------------------------
 # Tab definitions
 # ---------------------------------------------------------------------------
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📡 Radar Activo", "📊 Laboratorio", "📋 Bitácora", "🏆 Track Record", "📖 Manual"]
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["📡 Radar Activo", "📊 Laboratorio", "📋 Bitácora", "🏆 Track Record", "📖 Manual", "🔬 Backtesting"]
 )
 
 # ===========================================================================
@@ -1029,3 +1131,298 @@ No. Las SMA 50/200 y los fundamentales de Alpha Vantage están calibrados para e
 
     st.divider()
     st.caption("DINERITO · Pipeline automatizado de señales bursátiles · Actualizado diariamente a las 22:00 EST")
+
+# ===========================================================================
+# TAB 6 — Backtesting
+# ===========================================================================
+
+with tab6:
+    st.header("🔬 Backtesting Histórico 2015–Hoy")
+
+    # Check table exists
+    _bt_has_data = False
+    try:
+        _bt_has_data = backtest_table_exists()
+    except Exception:
+        _bt_has_data = False
+
+    if not _bt_has_data:
+        st.info(
+            "No hay datos de backtesting todavía. "
+            "Ejecuta el backtest desde el Panel de Control del sidebar (admin) "
+            "o con `python -m src.backtester`."
+        )
+        st.stop()
+
+    # ── Sección 2: Filtros ────────────────────────────────────────────────
+    with st.expander("⚙️ Filtros", expanded=True):
+        _f_col1, _f_col2, _f_col3, _f_col4 = st.columns(4)
+
+        _all_years   = get_all_years()
+        _all_sectors = get_all_sectors()
+
+        _year_range = _f_col1.slider(
+            "Rango de años",
+            min_value=int(_all_years[0]) if _all_years else 2015,
+            max_value=int(_all_years[-1]) if _all_years else 2025,
+            value=(
+                int(_all_years[0]) if _all_years else 2015,
+                int(_all_years[-1]) if _all_years else 2025,
+            ),
+        )
+        _sel_sectors = _f_col2.multiselect("Sectores", _all_sectors)
+        _tipo_filter = _f_col3.radio(
+            "Tipo señal",
+            ["Todas", "golden_cross", "death_cross"],
+            horizontal=True,
+        )
+        _scoring_min = _f_col4.slider("Scoring mínimo", 1, 3, 1)
+
+    # Build filter args
+    _años_sel = list(range(_year_range[0], _year_range[1] + 1))
+    _tipo_arg = None if _tipo_filter == "Todas" else _tipo_filter
+    _sect_arg = _sel_sectors if _sel_sectors else None
+
+    with st.spinner("Cargando datos..."):
+        _bt_df = get_backtest_df(
+            años=_años_sel,
+            sectores=_sect_arg,
+            tipo=_tipo_arg,
+            scoring_min=_scoring_min,
+        )
+
+    _bt_stats = compute_stats(_bt_df)
+
+    # ── Sección 1: Métricas principales ──────────────────────────────────
+    st.subheader("Métricas globales")
+    _m1, _m2, _m3, _m4 = st.columns(4)
+    _m1.metric("Hit Rate Global",      f"{_bt_stats['hit_rate_global']:.1f}%")
+    _m2.metric("Retorno Medio 30d",    f"{_bt_stats['retorno_medio_30d']:+.2f}%")
+    _m3.metric("Total Señales",        _bt_stats["total_senales"])
+    _m4.metric("Señales / Año (media)", f"{_bt_stats['senales_por_año_media']:.1f}")
+
+    _m5, _m6, _m7, _m8 = st.columns(4)
+    _m5.metric("Hit Rate Golden Cross", f"{_bt_stats['hit_rate_golden']:.1f}%")
+    _m6.metric("Hit Rate Death Cross",  f"{_bt_stats['hit_rate_death']:.1f}%")
+    _m7.metric("Mejor Ticker",          _bt_stats["mejor_ticker"])
+    _m8.metric("Peor Ticker",           _bt_stats["peor_ticker"])
+
+    st.divider()
+
+    # ── Sección 3: Gráficos ───────────────────────────────────────────────
+
+    # A) Equity Curve
+    _equity = _bt_stats["equity_curve"]
+    if _equity:
+        st.subheader("A) Equity Curve — $1.000 invertido por señal (compuesto)")
+        _eq_df = pd.DataFrame(_equity)
+        _fig_eq = go.Figure()
+        _fig_eq.add_trace(go.Scatter(
+            x=_eq_df["fecha"],
+            y=_eq_df["capital"],
+            mode="lines",
+            line=dict(color=COLORS["primary"], width=2),
+            fill="tozeroy",
+            fillcolor="rgba(0,212,170,0.07)",
+            name="Capital acumulado",
+        ))
+        _fig_eq.add_hline(
+            y=1000,
+            line_dash="dot",
+            line_color=COLORS["neutral"],
+            annotation_text="$1.000 inicial",
+            annotation_font_color=COLORS["neutral"],
+        )
+        _fig_eq.update_layout(
+            yaxis_title="Capital ($)",
+            template="plotly_dark",
+            height=380,
+            paper_bgcolor="#0e1117",
+            plot_bgcolor="#161b22",
+        )
+        st.plotly_chart(_fig_eq, use_container_width=True)
+
+    # B) Heatmap año × sector
+    _hr_año  = _bt_stats["hit_rate_por_año"]
+    _hr_sect = _bt_stats["hit_rate_por_sector"]
+    if _hr_año and _hr_sect and not _bt_df.empty:
+        st.subheader("B) Heatmap Hit Rate — Año × Sector")
+        _hmap_ev = _bt_df[_bt_df["exito_30d"].notna()].copy()
+        if not _hmap_ev.empty and "sector" in _hmap_ev.columns and "año" in _hmap_ev.columns:
+            _hmap_ev["exito_num"] = _hmap_ev["exito_30d"].astype(float)
+            _pivot = (
+                _hmap_ev.groupby(["año", "sector"])["exito_num"]
+                .mean()
+                .mul(100)
+                .round(1)
+                .unstack(fill_value=None)
+            )
+            _pivot = _pivot[[c for c in _pivot.columns if c not in ("nan", "N/A", "Unknown", "")]]
+            if not _pivot.empty:
+                _fig_hm = go.Figure(go.Heatmap(
+                    z=_pivot.values,
+                    x=_pivot.columns.tolist(),
+                    y=_pivot.index.tolist(),
+                    colorscale=[[0, "#7f1d1d"], [0.5, "#78350f"], [1, "#14532d"]],
+                    text=[[f"{v:.0f}%" if v is not None else "" for v in row] for row in _pivot.values],
+                    texttemplate="%{text}",
+                    colorbar=dict(title="Hit Rate %"),
+                    zmin=0,
+                    zmax=100,
+                ))
+                _fig_hm.update_layout(
+                    xaxis_title="Sector",
+                    yaxis_title="Año",
+                    template="plotly_dark",
+                    height=400,
+                    paper_bgcolor="#0e1117",
+                    plot_bgcolor="#161b22",
+                )
+                st.plotly_chart(_fig_hm, use_container_width=True)
+
+    # C) Hit Rate por Scoring
+    st.subheader("C) Hit Rate por Scoring")
+    _hr_sc = _bt_stats["hit_rate_por_scoring"]
+    if _hr_sc:
+        _fig_sc = go.Figure(go.Bar(
+            x=[f"Scoring {k}" for k in sorted(_hr_sc)],
+            y=[_hr_sc[k] for k in sorted(_hr_sc)],
+            marker_color=[COLORS["steelblue"], COLORS["primary"], COLORS["gold"]],
+            text=[f"{_hr_sc[k]:.1f}%" for k in sorted(_hr_sc)],
+            textposition="outside",
+            textfont=dict(color="#c9d1d9"),
+        ))
+        _fig_sc.add_hline(y=50, line_dash="dot", line_color=COLORS["neutral"])
+        _fig_sc.update_layout(
+            yaxis_title="Hit Rate (%)",
+            yaxis_range=[0, 100],
+            template="plotly_dark",
+            height=340,
+            paper_bgcolor="#0e1117",
+            plot_bgcolor="#161b22",
+        )
+        st.plotly_chart(_fig_sc, use_container_width=True)
+
+    # D) Scatter dist_sma_pct vs retorno_30d
+    if not _bt_df.empty and "dist_sma_pct" in _bt_df.columns and "retorno_30d" in _bt_df.columns:
+        _sc_df = _bt_df.dropna(subset=["dist_sma_pct", "retorno_30d"])
+        if not _sc_df.empty:
+            st.subheader("D) Distancia SMA vs Retorno 30d")
+            _fig_sc2 = go.Figure()
+            for _tipo, _col in [("golden_cross", COLORS["bullish"]), ("death_cross", COLORS["tomato"])]:
+                _sub = _sc_df[_sc_df["tipo_evento"] == _tipo]
+                if not _sub.empty:
+                    _fig_sc2.add_trace(go.Scatter(
+                        x=_sub["dist_sma_pct"],
+                        y=_sub["retorno_30d"],
+                        mode="markers",
+                        marker=dict(color=_col, size=6, opacity=0.55, line=dict(color="#0e1117", width=0.5)),
+                        text=_sub["ticker"],
+                        name=_tipo.replace("_", " ").title(),
+                    ))
+            _fig_sc2.add_hline(y=0, line_dash="dot", line_color=COLORS["neutral"])
+            _fig_sc2.update_layout(
+                xaxis_title="Distancia SMA (%)",
+                yaxis_title="Retorno 30d (%)",
+                template="plotly_dark",
+                height=400,
+                paper_bgcolor="#0e1117",
+                plot_bgcolor="#161b22",
+            )
+            st.plotly_chart(_fig_sc2, use_container_width=True)
+
+    st.divider()
+
+    # ── Sección 4: Tabla completa ─────────────────────────────────────────
+    st.subheader("Tabla de señales históricas")
+
+    _show_cols = [
+        "fecha_senal", "ticker", "sector", "tipo_evento",
+        "precio_entrada", "scoring", "adx_valor", "rsi_valor", "vol_ratio",
+        "retorno_7d", "retorno_15d", "retorno_30d", "exito_30d", "año",
+    ]
+    _show_cols = [c for c in _show_cols if c in _bt_df.columns]
+
+    if not _bt_df.empty:
+        _disp_df = _bt_df[_show_cols].copy()
+        _disp_df["resultado"] = _disp_df["exito_30d"].map(
+            {True: "✅ Éxito", False: "❌ Fallo", None: "—"}
+        ).fillna("—")
+
+        _col_cfg_bt = {
+            "fecha_senal":    st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
+            "ticker":         st.column_config.TextColumn("Ticker"),
+            "sector":         st.column_config.TextColumn("Sector"),
+            "tipo_evento":    st.column_config.TextColumn("Tipo"),
+            "precio_entrada": st.column_config.NumberColumn("Precio", format="$%.2f"),
+            "scoring":        st.column_config.NumberColumn("★", format="%d"),
+            "adx_valor":      st.column_config.NumberColumn("ADX", format="%.1f"),
+            "rsi_valor":      st.column_config.NumberColumn("RSI", format="%.1f"),
+            "vol_ratio":      st.column_config.NumberColumn("Vol ×", format="%.2f"),
+            "retorno_7d":     st.column_config.NumberColumn("Ret 7d %", format="%.2f%%"),
+            "retorno_15d":    st.column_config.NumberColumn("Ret 15d %", format="%.2f%%"),
+            "retorno_30d":    st.column_config.NumberColumn("Ret 30d %", format="%.2f%%"),
+            "exito_30d":      st.column_config.CheckboxColumn("Éxito 30d"),
+            "año":            st.column_config.NumberColumn("Año", format="%d"),
+            "resultado":      st.column_config.TextColumn("Resultado"),
+        }
+
+        st.dataframe(
+            _disp_df,
+            column_config=_col_cfg_bt,
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        _csv_bt = io.StringIO()
+        _disp_df.to_csv(_csv_bt, index=False)
+        st.download_button(
+            label="⬇️ Exportar CSV",
+            data=_csv_bt.getvalue(),
+            file_name=f"backtest_{date.today()}.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("Sin datos para los filtros seleccionados.")
+
+    st.divider()
+
+    # ── Sección 5: Conclusión automática ──────────────────────────────────
+    st.subheader("Conclusión automática del sistema")
+
+    _hr_g = _bt_stats["hit_rate_global"]
+    _recomendacion = (
+        "✅ OPERAR" if _hr_g >= 58
+        else "⚠️ AJUSTAR FILTROS" if _hr_g >= 50
+        else "🛑 NO OPERAR"
+    )
+
+    _mejor_sector = (
+        max(_bt_stats["hit_rate_por_sector"], key=_bt_stats["hit_rate_por_sector"].get)
+        if _bt_stats["hit_rate_por_sector"] else "N/A"
+    )
+    _peor_año = (
+        min(_bt_stats["hit_rate_por_año"], key=_bt_stats["hit_rate_por_año"].get)
+        if _bt_stats["hit_rate_por_año"] else "N/A"
+    )
+    _peor_año_hr = (
+        _bt_stats["hit_rate_por_año"].get(_peor_año, 0.0)
+        if isinstance(_peor_año, int) else 0.0
+    )
+    _mejor_sector_hr = _bt_stats["hit_rate_por_sector"].get(_mejor_sector, 0.0)
+    _hr_sc3 = _bt_stats["hit_rate_por_scoring"].get(3, 0.0)
+
+    _año_min = _year_range[0]
+    _año_max = _year_range[1]
+
+    st.info(f"""
+**El sistema generó {_bt_stats['total_senales']} señales entre {_año_min}–{_año_max}.**
+
+- Hit rate global: **{_hr_g:.1f}%** | Golden Cross: **{_bt_stats['hit_rate_golden']:.1f}%** | Death Cross: **{_bt_stats['hit_rate_death']:.1f}%**
+- Las señales de scoring 3 tienen un hit rate de **{_hr_sc3:.1f}%**
+- Mejor sector: **{_mejor_sector}** ({_mejor_sector_hr:.1f}% acierto)
+- Peor año: **{_peor_año}** ({_peor_año_hr:.1f}% acierto)
+- Retorno medio a 30 días: **{_bt_stats['retorno_medio_30d']:+.2f}%**
+
+**Recomendación: {_recomendacion}**
+""")
