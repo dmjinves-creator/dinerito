@@ -1161,14 +1161,16 @@ with tab6:
         _all_years   = get_all_years()
         _all_sectors = get_all_sectors()
 
+        _yr_min = int(_all_years[0])  if _all_years else 2015
+        _yr_max = int(_all_years[-1]) if _all_years else 2025
+        if _yr_max <= _yr_min:
+            _yr_max = _yr_min + 1  # slider requires min < max
+
         _year_range = _f_col1.slider(
             "Rango de años",
-            min_value=int(_all_years[0]) if _all_years else 2015,
-            max_value=int(_all_years[-1]) if _all_years else 2025,
-            value=(
-                int(_all_years[0]) if _all_years else 2015,
-                int(_all_years[-1]) if _all_years else 2025,
-            ),
+            min_value=_yr_min,
+            max_value=_yr_max,
+            value=(_yr_min, _yr_max),
         )
         _sel_sectors = _f_col2.multiselect("Sectores", _all_sectors)
         _tipo_filter = _f_col3.radio(
