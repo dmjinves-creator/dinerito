@@ -1171,14 +1171,16 @@ with tab6:
             min_value=_yr_min,
             max_value=_yr_max,
             value=(_yr_min, _yr_max),
+            key="bt_year_range",
         )
-        _sel_sectors = _f_col2.multiselect("Sectores", _all_sectors)
+        _sel_sectors = _f_col2.multiselect("Sectores", _all_sectors, key="bt_sectores")
         _tipo_filter = _f_col3.radio(
             "Tipo señal",
             ["Todas", "golden_cross", "death_cross"],
             horizontal=True,
+            key="bt_tipo",
         )
-        _scoring_min = _f_col4.slider("Scoring mínimo", 1, 3, 1)
+        _scoring_min = _f_col4.slider("Scoring mínimo", 1, 3, 1, key="bt_scoring_min")
 
     # Build filter args
     _años_sel = list(range(_year_range[0], _year_range[1] + 1))
