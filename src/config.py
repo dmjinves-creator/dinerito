@@ -13,18 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 def _req(key: str) -> str:
-    """Return the value of a required environment variable.
-
-    Args:
-        key: Name of the environment variable.
-
-    Returns:
-        The string value of the variable.
-
-    Raises:
-        ValueError: If the variable is not set or is empty.
-    """
+    """Return env var from os.environ or st.secrets (Streamlit Cloud)."""
     value = os.getenv(key)
+    if not value:
+        try:
+            import streamlit as st
+            value = st.secrets.get(key)
+        except Exception:
+            pass
     if not value:
         raise ValueError(
             f"Required environment variable '{key}' is not set. "
