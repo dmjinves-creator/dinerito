@@ -351,90 +351,88 @@ with tab4:
 
     if df_tr.empty or "senal_ok" not in df_tr.columns:
         st.info("Sin datos suficientes todavía (las señales necesitan >30 días para evaluarse).")
-        st.stop()
+    else:
+        df_eval = df_tr[df_tr["senal_ok"].notna()].copy()
 
-    df_eval = df_tr[df_tr["senal_ok"].notna()].copy()
+        if df_eval.empty:
+            st.info("Aún no hay señales evaluadas (>30 días de antigüedad).")
+        else:
+            df_eval["fecha_evento"] = pd.to_datetime(df_eval["fecha_evento"])
 
-    if df_eval.empty:
-        st.info("Aún no hay señales evaluadas (>30 días de antigüedad).")
-        st.stop()
+            # --- Scatter: dist_sma_pct vs retorno_30d ---
+            if "dist_sma_pct" in df_eval.columns and "retorno_30d" in df_eval.columns:
+                st.subheader("Señal vs Retorno 30d")
+                fig_scatter = go.Figure()
+                for tipo, color in [("golden_cross", "lime"), ("death_cross", "tomato")]:
+                    sub = df_eval[df_eval["tipo_evento"] == tipo]
+                    if not sub.empty:
+                        fig_scatter.add_trace(go.Scatter(
+                            x=sub["dist_sma_pct"],
+                            y=sub["retorno_30d"],
+                            mode="markers",
+                            marker=dict(
+                                color=color,
+                                size=sub["adx_14"].clip(lower=8, upper=40) if "adx_14" in sub.columns else 10,
+                                opacity=0.7,
+                            ),
+                            text=sub["ticker"],
+                            name=tipo.replace("_", " ").title(),
+                        ))
+                fig_scatter.update_layout(
+                    xaxis_title="Distancia SMA (%)",
+                    yaxis_title="Retorno 30d (%)",
+                    template="plotly_dark",
+                    height=400,
+                )
+                fig_scatter.add_hline(y=0, line_dash="dot", line_color="gray")
+                st.plotly_chart(fig_scatter, use_container_width=True)
 
-    df_eval["fecha_evento"] = pd.to_datetime(df_eval["fecha_evento"])
+            # --- Bar: hit rate por sector ---
+            if "sector" in df_eval.columns:
+                st.subheader("Hit Rate por Sector")
+                sector_stats = (
+                    df_eval.groupby("sector")["senal_ok"]
+                    .agg(hit_rate=lambda x: (x == True).mean() * 100, n="count")
+                    .reset_index()
+                    .sort_values("hit_rate", ascending=False)
+                )
+                sector_stats = sector_stats[sector_stats["sector"].notna() & (sector_stats["sector"] != "N/A")]
+                if not sector_stats.empty:
+                    fig_bar = go.Figure(go.Bar(
+                        x=sector_stats["sector"],
+                        y=sector_stats["hit_rate"],
+                        marker_color="steelblue",
+                        text=sector_stats["n"].apply(lambda n: f"n={n}"),
+                        textposition="outside",
+                    ))
+                    fig_bar.update_layout(
+                        yaxis_title="Hit Rate (%)",
+                        template="plotly_dark",
+                        height=350,
+                    )
+                    st.plotly_chart(fig_bar, use_container_width=True)
 
-    # --- Scatter: dist_sma_pct vs retorno_30d ---
-    if "dist_sma_pct" in df_eval.columns and "retorno_30d" in df_eval.columns:
-        st.subheader("Señal vs Retorno 30d")
-        fig_scatter = go.Figure()
-        for tipo, color in [("golden_cross", "lime"), ("death_cross", "tomato")]:
-            sub = df_eval[df_eval["tipo_evento"] == tipo]
-            if not sub.empty:
-                fig_scatter.add_trace(go.Scatter(
-                    x=sub["dist_sma_pct"],
-                    y=sub["retorno_30d"],
-                    mode="markers",
-                    marker=dict(
-                        color=color,
-                        size=sub["adx_14"].clip(lower=8, upper=40) if "adx_14" in sub.columns else 10,
-                        opacity=0.7,
-                    ),
-                    text=sub["ticker"],
-                    name=tipo.replace("_", " ").title(),
-                ))
-        fig_scatter.update_layout(
-            xaxis_title="Distancia SMA (%)",
-            yaxis_title="Retorno 30d (%)",
-            template="plotly_dark",
-            height=400,
-        )
-        fig_scatter.add_hline(y=0, line_dash="dot", line_color="gray")
-        st.plotly_chart(fig_scatter, use_container_width=True)
+            # --- Line: cumulative hit rate over time ---
+            st.subheader("Evolución del Hit Rate acumulado")
+            df_sorted = df_eval.sort_values("fecha_evento")
+            df_sorted["cum_ok"]    = (df_sorted["senal_ok"] == True).cumsum()
+            df_sorted["cum_total"] = range(1, len(df_sorted) + 1)
+            df_sorted["cum_hr"]    = df_sorted["cum_ok"] / df_sorted["cum_total"] * 100
 
-    # --- Bar: hit rate por sector ---
-    if "sector" in df_eval.columns:
-        st.subheader("Hit Rate por Sector")
-        sector_stats = (
-            df_eval.groupby("sector")["senal_ok"]
-            .agg(hit_rate=lambda x: (x == True).mean() * 100, n="count")
-            .reset_index()
-            .sort_values("hit_rate", ascending=False)
-        )
-        sector_stats = sector_stats[sector_stats["sector"].notna() & (sector_stats["sector"] != "N/A")]
-        if not sector_stats.empty:
-            fig_bar = go.Figure(go.Bar(
-                x=sector_stats["sector"],
-                y=sector_stats["hit_rate"],
-                marker_color="steelblue",
-                text=sector_stats["n"].apply(lambda n: f"n={n}"),
-                textposition="outside",
+            fig_line = go.Figure(go.Scatter(
+                x=df_sorted["fecha_evento"],
+                y=df_sorted["cum_hr"],
+                mode="lines+markers",
+                line=dict(color="gold", width=2),
+                name="Hit Rate acumulado",
             ))
-            fig_bar.update_layout(
-                yaxis_title="Hit Rate (%)",
+            fig_line.add_hline(y=50, line_dash="dot", line_color="gray", annotation_text="50%")
+            fig_line.update_layout(
+                yaxis_title="Hit Rate acumulado (%)",
                 template="plotly_dark",
                 height=350,
             )
-            st.plotly_chart(fig_bar, use_container_width=True)
-
-    # --- Line: cumulative hit rate over time ---
-    st.subheader("Evolución del Hit Rate acumulado")
-    df_sorted = df_eval.sort_values("fecha_evento")
-    df_sorted["cum_ok"]    = (df_sorted["senal_ok"] == True).cumsum()
-    df_sorted["cum_total"] = range(1, len(df_sorted) + 1)
-    df_sorted["cum_hr"]    = df_sorted["cum_ok"] / df_sorted["cum_total"] * 100
-
-    fig_line = go.Figure(go.Scatter(
-        x=df_sorted["fecha_evento"],
-        y=df_sorted["cum_hr"],
-        mode="lines+markers",
-        line=dict(color="gold", width=2),
-        name="Hit Rate acumulado",
-    ))
-    fig_line.add_hline(y=50, line_dash="dot", line_color="gray", annotation_text="50%")
-    fig_line.update_layout(
-        yaxis_title="Hit Rate acumulado (%)",
-        template="plotly_dark",
-        height=350,
-    )
-    st.plotly_chart(fig_line, use_container_width=True)
+            st.plotly_chart(fig_line, use_container_width=True)
 
 # ===========================================================================
 # TAB 5 — Manual
