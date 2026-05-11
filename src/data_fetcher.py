@@ -86,7 +86,7 @@ def descargar_y_validar(ticker: str) -> pd.DataFrame | None:
 
 
 def calcular_indicadores(df: pd.DataFrame) -> pd.DataFrame:
-    """Append SMA_50, SMA_200, RSI_14, ADX_14 and VOL_MA20 columns to the DataFrame.
+    """Append SMA_50, SMA_200, RSI_14, ADX_14, ATR_14 and VOL_MA20 columns to the DataFrame.
 
     All calculations use pandas_ta. Rows produced during the indicator warm-up
     period (the first ~200 candles) are dropped, so the returned DataFrame only
@@ -96,7 +96,7 @@ def calcular_indicadores(df: pd.DataFrame) -> pd.DataFrame:
         df: Validated OHLCV DataFrame from descargar_y_validar.
 
     Returns:
-        DataFrame with five additional indicator columns; NaN rows removed.
+        DataFrame with six additional indicator columns; NaN rows removed.
     """
     df = df.copy()
 
@@ -115,9 +115,12 @@ def calcular_indicadores(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df["ADX_14"] = float("nan")
 
+    # Calculate ATR_14 for dynamic stop loss
+    df["ATR_14"] = ta.atr(df["High"], df["Low"], df["Close"], length=14)
+
     df["VOL_MA20"] = ta.sma(df["Volume"], length=20)
 
-    indicator_cols = ["SMA_50", "SMA_200", "RSI_14", "ADX_14", "VOL_MA20"]
+    indicator_cols = ["SMA_50", "SMA_200", "RSI_14", "ADX_14", "ATR_14", "VOL_MA20"]
     df.dropna(subset=indicator_cols, inplace=True)
 
     return df

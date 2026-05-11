@@ -27,6 +27,7 @@ from src.database import (
     get_senales_recientes,
     get_stats_rendimiento,
     get_ultima_ejecucion,
+    get_backtest_history,
 )
 from src.backtest_stats import (
     backtest_table_exists,
@@ -568,8 +569,8 @@ with st.sidebar:
 # Tab definitions
 # ---------------------------------------------------------------------------
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["📡 Radar Activo", "📊 Laboratorio", "📋 Bitácora", "🏆 Track Record", "📖 Manual", "🔬 Backtesting"]
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+    ["📡 Radar Activo", "📊 Laboratorio", "📋 Bitácora", "🏆 Track Record", "📖 Manual", "🔬 Backtesting", "📈 Historial Backtests"]
 )
 
 # ===========================================================================
@@ -1153,6 +1154,7 @@ No. Las SMA 50/200 y los fundamentales de Alpha Vantage están calibrados para e
 
 with tab6:
     st.header("🔬 Backtesting Histórico 2015–Hoy")
+    st.info("✅ Nuevo: ahora también hay una pestaña adicional \"📈 Historial Backtests\" con resumen de ejecuciones y análisis IA.")
 
     # Check table exists
     _bt_has_data = False
@@ -1453,3 +1455,150 @@ with tab6:
 
 **Recomendación: {_recomendacion}**
 """)
+
+# ===========================================================================
+# TAB 7 — Historial Backtests
+# ===========================================================================
+
+with tab7:
+    st.header("📈 Historial de Backtests")
+
+    with st.spinner("Cargando historial..."):
+        df_history = get_backtest_history()
+
+    if df_history.empty:
+        st.info("No hay historial de backtests todavía. Ejecuta un backtest desde el Panel de Control.")
+        st.stop()
+
+    # Mostrar resumen general
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        total_backtests = len(df_history)
+        st.metric("Total Backtests", total_backtests)
+
+    with col2:
+        avg_hit_rate = df_history['hit_rate_global'].mean()
+        st.metric("Hit Rate Promedio", f"{avg_hit_rate:.1f}%")
+
+    with col3:
+        total_signals = df_history['senales_total'].sum()
+        st.metric("Señales Totales", total_signals)
+
+    with col4:
+        latest_scoring = df_history['scoring_recomendado'].iloc[0] if not df_history.empty else 1
+        st.metric("Scoring Recomendado", f"★ {latest_scoring}")
+
+    st.divider()
+
+    # Tabla de historial
+    st.subheader("Historial de Ejecuciones")
+
+    # Formatear datos para display
+    display_df = df_history.copy()
+    display_df['fecha_ejecucion'] = pd.to_datetime(display_df['fecha_ejecucion']).dt.strftime('%d/%m/%Y %H:%M')
+    display_df['duracion'] = display_df['duracion_seg'].apply(lambda x: f"{x}s" if x < 60 else f"{x//60}m {x%60}s")
+
+    # Columnas a mostrar
+    cols_to_show = [
+        'fecha_ejecucion', 'tickers_procesados', 'senales_total',
+        'hit_rate_global', 'hit_rate_golden', 'hit_rate_death',
+        'retorno_promedio', 'capital_final', 'sl_hits', 'scoring_recomendado', 'duracion'
+    ]
+
+    column_config = {
+        'fecha_ejecucion': st.column_config.TextColumn('Fecha Ejecución'),
+        'tickers_procesados': st.column_config.NumberColumn('Tickers', format='%d'),
+        'senales_total': st.column_config.NumberColumn('Señales', format='%d'),
+        'hit_rate_global': st.column_config.NumberColumn('Hit Rate Global', format='%.1f%%'),
+        'hit_rate_golden': st.column_config.NumberColumn('Hit Rate Golden', format='%.1f%%'),
+        'hit_rate_death': st.column_config.NumberColumn('Hit Rate Death', format='%.1f%%'),
+        'retorno_promedio': st.column_config.NumberColumn('Retorno Promedio', format='%.2f%%'),
+        'capital_final': st.column_config.NumberColumn('Capital Final', format='$%.2f'),
+        'sl_hits': st.column_config.NumberColumn('SL Hits', format='%d'),
+        'scoring_recomendado': st.column_config.NumberColumn('Scoring ★', format='%d'),
+        'duracion': st.column_config.TextColumn('Duración')
+    }
+
+    st.dataframe(
+        display_df[cols_to_show],
+        column_config=column_config,
+        hide_index=True,
+        use_container_width=True
+    )
+
+    # Mostrar análisis IA del último backtest
+    if not df_history.empty:
+        st.divider()
+        st.subheader("🤖 Análisis IA - Último Backtest")
+
+        latest = df_history.iloc[0]
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            if latest.get('analisis_ia'):
+                st.markdown("**Análisis:**")
+                st.info(latest['analisis_ia'])
+            else:
+                st.info("Sin análisis disponible")
+
+            if latest.get('recomendaciones'):
+                st.markdown("**Recomendaciones:**")
+                st.success(latest['recomendaciones'])
+
+        with col2:
+            st.markdown("**Métricas del Backtest:**")
+            st.metric("Capital Inicial", "$1,000.00")
+            st.metric("Capital Final", f"${latest.get('capital_final', 0):.2f}")
+            st.metric("Señales Golden", latest.get('senales_golden', 0))
+            st.metric("Señales Death", latest.get('senales_death', 0))
+            st.metric("SL Average Return", f"{latest.get('sl_avg_return', 0):.2f}%")
+
+    # Gráfico de evolución del hit rate
+    st.divider()
+    st.subheader("📊 Evolución del Hit Rate")
+
+    if len(df_history) > 1:
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=df_history['fecha_ejecucion'],
+            y=df_history['hit_rate_global'],
+            mode='lines+markers',
+            name='Hit Rate Global',
+            line=dict(color=COLORS['primary'], width=3)
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=df_history['fecha_ejecucion'],
+            y=df_history['hit_rate_golden'],
+            mode='lines+markers',
+            name='Hit Rate Golden',
+            line=dict(color=COLORS['bullish'], width=2)
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=df_history['fecha_ejecucion'],
+            y=df_history['hit_rate_death'],
+            mode='lines+markers',
+            name='Hit Rate Death',
+            line=dict(color=COLORS['bearish'], width=2)
+        ))
+
+        fig.add_hline(y=50, line_dash="dash", line_color=COLORS['neutral'],
+                     annotation_text="Umbral 50%")
+
+        fig.update_layout(
+            title="Evolución del Hit Rate por Tipo de Señal",
+            xaxis_title="Fecha de Ejecución",
+            yaxis_title="Hit Rate (%)",
+            template="plotly_dark",
+            height=400,
+            paper_bgcolor="#0e1117",
+            plot_bgcolor="#161b22"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Necesitas al menos 2 backtests para ver la evolución.")

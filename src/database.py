@@ -443,3 +443,35 @@ def get_senales_para_seguimiento() -> pd.DataFrame:
         ORDER BY fecha_evento ASC
     """
     return _query_df(sql)
+
+
+def get_backtest_history() -> pd.DataFrame:
+    """Fetch backtest execution history with AI analysis.
+
+    Returns:
+        DataFrame with backtest_history table data.
+    """
+    sql = """
+        SELECT
+            id,
+            fecha_ejecucion,
+            tickers_procesados,
+            senales_total,
+            senales_golden,
+            senales_death,
+            hit_rate_global,
+            hit_rate_golden,
+            hit_rate_death,
+            retorno_promedio,
+            capital_inicial,
+            capital_final,
+            sl_hits,
+            sl_avg_return,
+            analisis_ia,
+            recomendaciones,
+            scoring_recomendado,
+            duracion_seg
+        FROM backtest_history
+        ORDER BY fecha_ejecucion DESC
+    """
+    return _query_df(sql)

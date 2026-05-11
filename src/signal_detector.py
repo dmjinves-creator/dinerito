@@ -31,7 +31,7 @@ def detectar_cruce(df: pd.DataFrame, ticker: str) -> dict | None:
           Death Cross:  RSI_14 >= 25  (rejects oversold traps)
 
     Args:
-        df: DataFrame with columns Close, Volume, SMA_50, SMA_200, RSI_14, ADX_14, VOL_MA20.
+        df: DataFrame with columns Close, Volume, SMA_50, SMA_200, RSI_14, ADX_14, ATR_14, VOL_MA20.
             Must contain at least 2 rows.
         ticker: Ticker symbol used to populate the result dict.
 
@@ -61,6 +61,7 @@ def detectar_cruce(df: pd.DataFrame, ticker: str) -> dict | None:
     tipo_evento = "golden_cross" if golden else "death_cross"
 
     adx: float = float(today["ADX_14"])
+    atr: float = float(today["ATR_14"])
     volume: float = float(today["Volume"])
     vol_ma20: float = float(today["VOL_MA20"])
     rsi: float = float(today["RSI_14"])
@@ -102,6 +103,9 @@ def detectar_cruce(df: pd.DataFrame, ticker: str) -> dict | None:
     dist_sma_pct: float = round(((sma50_today - sma200_today) / sma200_today) * 100, 4)
     scoring: int = calcular_scoring(dist_sma_pct)
 
+    # --- Stop Loss Level ---
+    stop_loss: float = round(precio_cierre - (2 * atr), 2) if golden else round(precio_cierre + (2 * atr), 2)
+
     fecha_evento: date = df.index[-1].date() if hasattr(df.index[-1], "date") else df.index[-1]
 
     senal: dict = {
@@ -113,14 +117,16 @@ def detectar_cruce(df: pd.DataFrame, ticker: str) -> dict | None:
         "sma_200": round(sma200_today, 2),
         "rsi_14": round(rsi, 2),
         "adx_14": round(adx, 2),
+        "atr_14": round(atr, 2),
+        "stop_loss": stop_loss,
         "volumen_relativo": volumen_relativo,
         "dist_sma_pct": dist_sma_pct,
         "scoring": scoring,
     }
 
     logger.info(
-        "%s: %s DETECTED — scoring %d/3 | dist %.2f%% | RSI %.1f | ADX %.1f | vol %.2fx",
-        ticker, tipo_evento, scoring, dist_sma_pct, rsi, adx, volumen_relativo,
+        "%s: %s DETECTED — scoring %d/3 | dist %.2f%% | RSI %.1f | ADX %.1f | ATR %.2f | SL %.2f | vol %.2fx",
+        ticker, tipo_evento, scoring, dist_sma_pct, rsi, adx, atr, stop_loss, volumen_relativo,
     )
     return senal
 
